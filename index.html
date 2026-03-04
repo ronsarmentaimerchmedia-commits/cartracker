@@ -19,6 +19,7 @@
             --text: #333;
             --border: #007AFF;
             --card-bg: #f8f9fa;
+            --accent: #FF9500;
         }
 
         .dark-mode {
@@ -63,9 +64,18 @@
             z-index: 1000; background: var(--bg); padding: 18px; border-radius: 28px; 
             box-shadow: 0 10px 35px rgba(0,0,0,0.3); display: flex; flex-direction: column; 
             align-items: center; gap: 10px; width: 92%; max-width: 340px; 
-            border: 1px solid var(--border); max-height: 55vh; overflow-y: auto; color: var(--text);
+            border: 1px solid var(--border); max-height: 65vh; overflow-y: auto; color: var(--text);
             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
         }
+
+        .vehicle-toggle-row {
+            display: flex; background: var(--card-bg); border-radius: 12px; padding: 4px; width: 100%; gap: 4px;
+        }
+        .v-btn {
+            flex: 1; padding: 8px; border-radius: 10px; border: none; font-weight: bold; cursor: pointer;
+            background: transparent; color: var(--text); font-size: 13px; transition: 0.2s;
+        }
+        .v-btn.active { background: #007AFF; color: white; }
 
         .stats-row { 
             display: flex; gap: 10px; align-items: center; width: 100%; 
@@ -76,6 +86,19 @@
         .speed-display { font-size: 28px; font-weight: 900; color: #007AFF; text-align: center; }
         button#btn { padding: 15px; border-radius: 16px; background: #007AFF; color: white; font-weight: 800; width: 100%; border: none; cursor: pointer; font-size: 16px; }
         button#btn.tracking-on { background: #FF3B30; }
+
+        .fuel-log-btn { background: var(--accent) !important; margin-top: 5px; }
+
+        /* Modal Styles */
+        #fuelModal {
+            display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background: var(--bg); padding: 25px; border-radius: 20px; width: 85%; max-width: 300px;
+            display: flex; flex-direction: column; gap: 15px; color: var(--text); border: 2px solid var(--accent);
+        }
+        .modal-content input { padding: 12px; border-radius: 10px; border: 1px solid #ccc; font-size: 16px; width: 100%; box-sizing: border-box; }
         
         .export-section { width: 100%; border-top: 1px solid rgba(0,0,0,0.1); padding-top: 10px; margin-top: 5px; display: flex; flex-direction: column; gap: 6px; }
         .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
@@ -112,6 +135,11 @@
             <option value="vergel">Vergel Apurillo</option>
         </select>
 
+        <div class="vehicle-toggle-row">
+            <button id="v-car" class="v-btn active" onclick="setVehicle('car')">🚗 Car</button>
+            <button id="v-moto" class="v-btn" onclick="setVehicle('moto')">🏍️ Moto</button>
+        </div>
+
         <div class="driver-container">
             <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img">
             <div style="display:flex; flex-direction:column; flex-grow:1;">
@@ -121,6 +149,7 @@
         </div>
 
         <button onclick="toggleTracking()" id="btn">📡 Start Tracking</button>
+        <button onclick="openFuelModal()" id="fuelBtn" class="export-btn fuel-log-btn">⛽ Log Fuel Expense</button>
 
         <div class="stats-row">
             <div class="speed-display"><span id="speed">0</span><span style="font-size:11px; display:block; opacity: 0.7; font-weight: 600;">km/h</span></div>
@@ -141,6 +170,18 @@
         </div>
     </div>
 
+    <div id="fuelModal">
+        <div class="modal-content">
+            <h3 style="margin:0; text-align:center;">⛽ Fuel Entry</h3>
+            <input type="number" id="fuelAmount" placeholder="Amount (PHP)" step="0.01">
+            <input type="number" id="fuelLiters" placeholder="Liters (L)" step="0.01">
+            <div class="action-grid">
+                <button class="export-btn" style="background:#FF3B30;" onclick="closeFuelModal()">Cancel</button>
+                <button class="export-btn" onclick="submitFuel()">Save Log</button>
+            </div>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
@@ -150,27 +191,56 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/744/744465.png', iconSize: [40, 40], iconAnchor: [20, 20] });
+        const icons = {
+            car: L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/744/744465.png', iconSize: [40, 40], iconAnchor: [20, 20] }),
+            moto: L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/3721/3721619.png', iconSize: [40, 40], iconAnchor: [20, 20] })
+        };
+
         const map = L.map('map', { zoomControl: false }).setView([14.5794, 121.0359], 15);
-        
         const lightTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
         const darkTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png');
-        
-        // Traffic Layer (TomTom or similar overlay)
-        const trafficLayer = L.tileLayer('https://{s}.tile.thunderforest.com/transport/{z}/{x}/{y}.png?apikey=YOUR_API_KEY', {
-            opacity: 0.7
-        }); 
-        // Note: Using a standard high-visibility transport layer for congestion visualization
-        const hybridTraffic = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
-
         lightTiles.addTo(map);
         
-        let carMarker = L.marker([14.5794, 121.0359], {icon: carIcon}).addTo(map);
+        let carMarker = L.marker([14.5794, 121.0359], {icon: icons.car}).addTo(map);
         let historyLine = L.polyline([], {color: '#007AFF', weight: 6, opacity: 0.8}).addTo(map);
         
         let isTracking = false;
-        let isTrafficOn = false;
+        let currentVehicle = 'car';
         let watchID = null;
+
+        window.setVehicle = (type) => {
+            currentVehicle = type;
+            document.getElementById('v-car').classList.toggle('active', type === 'car');
+            document.getElementById('v-moto').classList.toggle('active', type === 'moto');
+            carMarker.setIcon(icons[type]);
+            if (isTracking) update(ref(db, 'cars/car1'), { vehicleType: type });
+        };
+
+        window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
+        window.closeFuelModal = () => {
+            document.getElementById('fuelModal').style.display = 'none';
+            document.getElementById('fuelAmount').value = '';
+            document.getElementById('fuelLiters').value = '';
+        };
+
+        window.submitFuel = async () => {
+            const amount = document.getElementById('fuelAmount').value;
+            const liters = document.getElementById('fuelLiters').value;
+            const driverKey = document.getElementById('driverPicker').value;
+            
+            if(!amount || !liters) return alert("Please fill both fields.");
+
+            await push(ref(db, `fuel_logs/${driverKey}`), {
+                amount: parseFloat(amount),
+                liters: parseFloat(liters),
+                vehicle: currentVehicle,
+                timestamp: new Date().getTime(),
+                dateString: new Date().toLocaleDateString()
+            });
+
+            alert("Fuel logged successfully!");
+            closeFuelModal();
+        };
 
         window.toggleTheme = () => {
             const body = document.body;
@@ -181,40 +251,9 @@
             } else {
                 body.classList.add('dark-mode');
                 map.removeLayer(lightTiles);
-                darkTiles.addTo(map);
+                darkTiles.addTo-map(darkTiles);
             }
         };
-
-        window.toggleTraffic = () => {
-            const btn = document.getElementById('trafficBtn');
-            if (!isTrafficOn) {
-                isTrafficOn = true;
-                btn.classList.add('traffic-on');
-                // Adding a specialized traffic overlay
-                window.trafficOverlay = L.tileLayer('https://{s}.tile.waymarkedtrails.org/slopes/{z}/{x}/{y}.png', {opacity: 0.4}).addTo(map);
-                // For actual Manila traffic, we'll use the OpenSeaMap or similar hybrid that highlights routes
-                map.addLayer(L.tileLayer('https://tiles.wmflabs.org/osm-no-labels/{z}/{x}/{y}.png', {opacity: 0.3}));
-            } else {
-                isTrafficOn = false;
-                btn.classList.remove('traffic-on');
-                map.eachLayer((layer) => {
-                    if (layer.options && layer.options.opacity < 0.9 && layer !== historyLine) {
-                        map.removeLayer(layer);
-                    }
-                });
-            }
-        };
-
-        function getDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
-            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-        }
-
-        document.getElementById('historyDate').valueAsDate = new Date();
 
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
@@ -226,7 +265,12 @@
                 watchID = navigator.geolocation.watchPosition((pos) => {
                     const { latitude: lat, longitude: lng, speed: s } = pos.coords;
                     const speed = Math.round((s || 0) * 3.6);
-                    update(ref(db, 'cars/car1'), { lat, lng, speed, driver: driverKey, lastUpdated: new Date().getTime() });
+                    update(ref(db, 'cars/car1'), { 
+                        lat, lng, speed, 
+                        driver: driverKey, 
+                        vehicleType: currentVehicle,
+                        lastUpdated: new Date().getTime() 
+                    });
                     const today = new Date().toISOString().split('T')[0];
                     push(ref(db, `archives/${driverKey}/${today}`), { lat, lng, timestamp: new Date().getTime() });
                     map.panTo([lat, lng]);
@@ -239,62 +283,22 @@
             }
         };
 
-        window.viewRoute = async () => {
-            const driver = document.getElementById('driverPicker').value;
-            const date = document.getElementById('historyDate').value;
-            const snapshot = await get(ref(db, `archives/${driver}/${date}`));
-            if(!snapshot.exists()) return alert("No route found for this date.");
-            const points = [];
-            snapshot.forEach(child => { points.push([child.val().lat, child.val().lng]); });
-            historyLine.setLatLngs(points);
-            map.fitBounds(historyLine.getBounds(), {padding: [50, 50]});
-            document.getElementById('clearBtn').style.display = 'block';
-        };
-
-        window.clearRoute = () => { historyLine.setLatLngs([]); document.getElementById('clearBtn').style.display = 'none'; };
-
-        window.exportHistory = async () => {
-            const driver = document.getElementById('driverPicker').value;
-            const date = document.getElementById('historyDate').value;
-            const snapshot = await get(ref(db, `archives/${driver}/${date}`));
-            if(!snapshot.exists()) return alert("No data to export.");
-
-            let totalKm = 0;
-            let lastPoint = null;
-            const data = [];
-
-            snapshot.forEach(child => {
-                const v = child.val();
-                if (lastPoint) totalKm += getDistance(lastPoint.lat, lastPoint.lng, v.lat, v.lng);
-                lastPoint = v;
-                data.push({ Time: new Date(v.timestamp).toLocaleTimeString(), Lat: v.lat, Lng: v.lng });
-            });
-
-            data.push({});
-            data.push({ Time: "TOTAL DISTANCE TRAVELLED:", Lat: totalKm.toFixed(2) + " km" });
-
-            const ws = XLSX.utils.json_to_sheet(data);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Travel History");
-            XLSX.writeFile(wb, `iMerch_Fleet_${driver}_${date}.xlsx`);
-        };
-
-        window.updateDriverProfile = () => {
-            const picker = document.getElementById('driverPicker');
-            document.getElementById('profilePic').src = picker.value + ".jpg";
-            document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
-            clearRoute();
-        };
-
         onValue(ref(db, 'cars/car1'), (snap) => {
             if(snap.exists()){
                 const d = snap.val();
                 carMarker.setLatLng([d.lat, d.lng]);
+                if(d.vehicleType) carMarker.setIcon(icons[d.vehicleType]);
                 document.getElementById('speed').innerText = d.speed || 0;
                 document.getElementById('battery').innerText = `🔋 ${d.battery || '--'}%`;
                 document.getElementById('lastSeen').innerText = "Update: " + new Date().toLocaleTimeString();
             }
         });
+
+        window.updateDriverProfile = () => {
+            const picker = document.getElementById('driverPicker');
+            document.getElementById('profilePic').src = picker.value + ".jpg";
+            document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
+        };
     </script>
 </body>
 </html>
