@@ -56,6 +56,10 @@
         
         .stats-row { display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; padding-top: 5px; border-top: 1px solid #eee; margin-top: 5px; }
         .speed-val { color: #007AFF; font-size: 14px; }
+
+        .type-selector { display: flex; gap: 10px; margin-top: 5px; }
+        .type-btn { flex: 1; padding: 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-size: 12px; cursor: pointer; font-weight: bold;}
+        .type-btn.active { background: var(--border); color: white; }
     </style>
 </head>
 <body class="light-mode">
@@ -86,10 +90,14 @@
         </select>
 
         <div style="display:flex; align-items:center; gap:12px;">
-            <img id="profilePic" src="ron.jpg" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
+            <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
             <div style="flex-grow: 1;">
                 <b id="displayDriver">Ron Sarmenta</b><br>
                 <span id="liveSpeed" class="speed-val">Speed: 0 km/h</span>
+                <div class="type-selector">
+                    <button id="typeCar" class="type-btn active" onclick="setVehicleType('car')">🚗 Auto</button>
+                    <button id="typeBike" class="type-btn" onclick="setVehicleType('bike')">🏍️ Motor</button>
+                </div>
                 <div class="stats-row">
                     <span>Dist: <span id="statDist">0.00</span> km</span>
                     <span>Batt: <span id="statBatt">--</span>%</span>
@@ -101,7 +109,7 @@
         
         <div class="action-grid">
             <button onclick="openFuelModal()" class="fuel-log-btn">⛽ Fuel</button>
-            <button onclick="openChartModal()" class="fuel-log-btn" style="background:#5856D6 !important;">📊 Report</button>
+            <button onclick="checkAdminPass()" class="fuel-log-btn" style="background:#5856D6 !important;">📊 Report</button>
         </div>
     </div>
 
@@ -154,42 +162,34 @@
         
         let vehicleMarkers = {};
         let wakeLock = null;
-        let fuelChartInstance = null;
-        let geoFence = null; // Store the circle object
-        let fenceRadius = 500; // meters
+        let geoFence = null;
+        let fenceRadius = 500;
+        let selectedType = 'car';
 
         const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png', iconSize: [45, 45], iconAnchor: [22, 22] });
         const bikeIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png', iconSize: [45, 45], iconAnchor: [22, 22] });
 
-        function getVehicleType(driver) {
-            const cars = ['ron', 'mico', 'darwin'];
-            return cars.includes(driver.toLowerCase()) ? carIcon : bikeIcon;
-        }
-
-        // --- GEOfencing: Set Fence on Map Context Menu (Long Press) ---
-        map.on('contextmenu', (e) => {
-            if (geoFence) map.removeLayer(geoFence);
-            geoFence = L.circle(e.latlng, {
-                radius: fenceRadius,
-                color: '#007AFF',
-                fillColor: '#007AFF',
-                fillOpacity: 0.1
-            }).addTo(map);
+        window.setVehicleType = (type) => {
+            selectedType = type;
+            document.getElementById('typeCar').classList.toggle('active', type === 'car');
+            document.getElementById('typeBike').classList.toggle('active', type === 'bike');
             
-            document.getElementById('routeStatus').style.display = 'block';
-            document.getElementById('routeInfo').innerText = "Geo-Fence Set (500m)";
-            document.getElementById('routeStatus').style.background = "#007AFF";
-        });
-
-        window.clearFence = () => {
-            if (geoFence) {
-                map.removeLayer(geoFence);
-                geoFence = null;
-                document.getElementById('routeStatus').style.display = 'none';
+            // If tracking, update immediately in DB
+            if(window.isTracking) {
+                const driver = document.getElementById('driverPicker').value;
+                update(ref(db, `cars/${driver}`), { type: selectedType });
             }
         };
 
-        // --- UPDATED TRACKING LOGIC ---
+        window.checkAdminPass = () => {
+            const pass = prompt("Enter Admin Password:");
+            if (pass === "1234") { // Change your password here
+                document.getElementById('chartModal').style.display = 'flex';
+            } else {
+                alert("Incorrect Password!");
+            }
+        };
+
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
             const driver = document.getElementById('driverPicker').value;
@@ -203,27 +203,20 @@
                 window.watchID = navigator.geolocation.watchPosition(async pos => {
                     const lat = pos.coords.latitude;
                     const lng = pos.coords.longitude;
-                    let speedMS = pos.coords.speed || 0; 
-                    let speedKMH = Math.round(speedMS * 3.6); 
+                    let speedKMH = Math.round((pos.coords.speed || 0) * 3.6); 
 
-                    // Check Geo-Fence
                     if (geoFence) {
                         const dist = map.distance([lat, lng], geoFence.getLatLng());
                         if (dist > fenceRadius) {
                             document.getElementById('routeStatus').style.background = "#FF3B30";
                             document.getElementById('routeInfo').innerText = "⚠️ OUT OF BOUNDS!";
-                            // Optional: Vibration or browser alert
-                            if (navigator.vibrate) navigator.vibrate(500);
-                        } else {
-                            document.getElementById('routeStatus').style.background = "#34C759";
-                            document.getElementById('routeInfo').innerText = "Safe within Fence";
                         }
                     }
 
                     let batt = 0;
                     try { const b = await navigator.getBattery(); batt = Math.round(b.level * 100); } catch(e){}
 
-                    update(ref(db, `cars/${driver}`), { lat, lng, speed: speedKMH, batt, lastUpdated: Date.now() });
+                    update(ref(db, `cars/${driver}`), { lat, lng, speed: speedKMH, batt, type: selectedType, lastUpdated: Date.now() });
                     push(ref(db, `history/${driver}/${today}`), { lat, lng, speed: speedKMH, time: Date.now(), batt });
 
                     document.getElementById('liveSpeed').innerText = `Speed: ${speedKMH} km/h`;
@@ -242,16 +235,17 @@
             }
         };
 
-        // --- REAL-TIME MARKER UPDATES ---
         onValue(ref(db, 'cars'), (snapshot) => {
             const data = snapshot.val();
             if(!data) return;
             for(let driver in data) {
-                const { lat, lng } = data[driver];
+                const { lat, lng, type } = data[driver];
+                const icon = (type === 'bike') ? bikeIcon : carIcon;
                 if(!vehicleMarkers[driver]) {
-                    vehicleMarkers[driver] = L.marker([lat, lng], { icon: getVehicleType(driver) }).addTo(map).bindPopup(driver.toUpperCase());
+                    vehicleMarkers[driver] = L.marker([lat, lng], { icon: icon }).addTo(map).bindPopup(driver.toUpperCase());
                 } else {
                     vehicleMarkers[driver].setLatLng([lat, lng]);
+                    vehicleMarkers[driver].setIcon(icon);
                 }
             }
         });
@@ -259,12 +253,15 @@
         window.updateDriverProfile = () => {
             const picker = document.getElementById('driverPicker');
             const driver = picker.value;
-            document.getElementById('profilePic').src = driver + ".jpg";
+            // FIXED: Path for Ron Sarmenta's image
+            document.getElementById('profilePic').src = (driver === 'ron') ? "Ron Sarmenta.jpg" : driver + ".jpg";
             document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
         };
 
+        // Standard helpers
         window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
         window.closeFuelModal = () => document.getElementById('fuelModal').style.display = 'none';
+        window.closeChartModal = () => document.getElementById('chartModal').style.display = 'none';
         window.toggleTheme = () => document.body.classList.toggle('dark-mode');
 
         window.updateDriverProfile();
