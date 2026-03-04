@@ -16,7 +16,6 @@
         
         .driver-container { display: flex; align-items: center; gap: 12px; width: 100%; padding-bottom: 10px; border-bottom: 1px solid #eee; margin-bottom: 5px; position: relative; }
         
-        /* Premium Pulse Effect */
         .profile-img { width: 52px; height: 52px; border-radius: 50%; border: 2px solid #007AFF; object-fit: cover; background: #eee; transition: all 0.3s; }
         .tracking-active .profile-img { border-color: #34C759; box-shadow: 0 0 10px rgba(52, 199, 89, 0.5); animation: pulse 2s infinite; }
         @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(52, 199, 89, 0); } 100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0); } }
@@ -50,7 +49,7 @@
             <option value="mico">Mico Balmaceda</option>
             <option value="darwin">Darwin Pengson</option>
             <option value="eljhay">Eljhay Ramos</option>
-            option value="vergel">Vergel Apurillo </option>
+            <option value="vergel">Vergel Apurillo</option>
         </select>
 
         <div class="driver-container" id="driverBox">
@@ -87,15 +86,15 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         
+        // FIXED: Added missing comma and correctly formatted Vergel object
         const drivers = {
             ron: { name: "Ron Sarmenta", user: "@ronsarmenta_imerch", img: "Ron Sarmenta.jpg" },
             mico: { name: "Mico Balmaceda", user: "@mico_imerch", img: "mico.jpg" },
             darwin: { name: "Darwin Pengson", user: "@darwin_imerch", img: "darwin.jpg" },
-            eljhay: { name: "Eljhay Ramos", user: "@eljhay_imerch", img: "eljhay.jpg" }
-           vergel: { name: "Vergel Apurillo", user: "@vergel_imerch", img: "vergel.jpg" }
+            eljhay: { name: "Eljhay Ramos", user: "@eljhay_imerch", img: "eljhay.jpg" },
+            vergel: { name: "Vergel Apurillo", user: "@vergel_imerch", img: "vergel.jpg" }
         };
 
-        // Initialize Driver from LocalStorage
         const savedDriver = localStorage.getItem('selectedDriver') || 'ron';
         document.getElementById('driverPicker').value = savedDriver;
 
@@ -111,7 +110,6 @@
             };
         };
 
-        // Run changeDriver once to set initial UI
         changeDriver();
 
         const fenceCenter = [14.5794, 121.0359]; 
@@ -237,6 +235,3 @@
     </script>
 </body>
 </html>
-
-
-
