@@ -36,7 +36,7 @@
         
         #chartModal, #fuelModal, #historyModal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; display: none; align-items: center; justify-content: center; }
         .modal-content { background: var(--bg); padding: 20px; border-radius: 20px; width: 85%; max-width: 400px; color: var(--text); max-height: 85vh; overflow-y: auto; }
-        .leaderboard-item { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; font-size: 14px; }
+        .leaderboard-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; font-size: 14px; }
     </style>
 </head>
 <body class="light-mode">
@@ -58,11 +58,11 @@
             <img id="profilePic" src="Ron Sarmenta.jpg" style="width:50px; height:50px; border-radius:50%; border:2px solid #007AFF; object-fit:cover;" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
             <div>
                 <b id="displayDriver">Ron Sarmenta</b><br>
-                <span style="font-size:11px; color:var(--secondary-text);">Status: <span id="lastUpdateTime">Ready</span></span>
+                <span style="font-size:11px; color:var(--secondary-text);">Status: <span id="lastUpdateTime" style="color:#34C759; font-weight:bold;">Ready</span></span>
             </div>
         </div>
 
-        <select id="driverPicker" onchange="updateDriverProfile()" style="margin: 10px 0; width: 100%; padding: 10px; border-radius: 10px;">
+        <select id="driverPicker" onchange="updateDriverProfile()" style="margin: 10px 0; width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ddd;">
             <option value="ron">Ron Sarmenta</option>
             <option value="mico">Mico Balmaceda</option>
             <option value="darwin">Darwin Pengson</option>
@@ -90,116 +90,164 @@
         </div>
     </div>
 
-    <div id="fuelModal"><div class="modal-content"><h3>⛽ Fuel Log</h3><input type="number" id="fuelAmount" placeholder="Amount (PHP)" style="width:100%; padding:12px; margin-bottom:10px;"><input type="number" id="fuelLiters" placeholder="Liters" style="width:100%; padding:12px; margin-bottom:10px;"><button class="main-btn" onclick="submitFuel()">Save</button><button onclick="closeModal('fuelModal')" style="width:100%; border:none; background:none; color:gray; margin-top:10px;">Cancel</button></div></div>
-    <div id="chartModal"><div class="modal-content"><h3>📊 Fleet Leaderboard</h3><div id="leaderboardList"></div><button onclick="closeModal('chartModal')" class="main-btn" style="background:gray;">Close</button></div></div>
-    <div id="historyModal"><div class="modal-content"><h3>📋 History</h3><input type="date" id="historyDate" onchange="loadHistory()" style="width:100%; padding:10px; margin-bottom:15px;"><div id="historyList"></div><button onclick="closeModal('historyModal')" class="main-btn" style="background:gray;">Close</button></div></div>
+    <div id="fuelModal">
+        <div class="modal-content">
+            <h3>⛽ Fuel Log</h3>
+            <input type="number" id="fuelLiters" placeholder="Liters Loaded" style="width:100%; padding:12px; margin-bottom:10px; border-radius:10px; border:1px solid #ddd;">
+            <button class="main-btn" onclick="submitFuel()">Save & Reset Trip</button>
+            <button onclick="closeModal('fuelModal')" style="width:100%; border:none; background:none; color:gray; margin-top:10px;">Cancel</button>
+        </div>
+    </div>
+
+    <div id="chartModal">
+        <div class="modal-content">
+            <h3>📊 Fleet Report</h3>
+            <div id="leaderboardList" style="margin-bottom:15px;"></div>
+            <button onclick="exportToExcel()" class="main-btn" style="background:#34C759; margin-bottom:10px;">📥 Export to Excel</button>
+            <button onclick="clearLogs()" class="main-btn" style="background:#FF3B30; margin-bottom:10px;">🗑️ Clear Logs</button>
+            <button onclick="closeModal('chartModal')" class="main-btn" style="background:gray;">Close</button>
+        </div>
+    </div>
+
+    <div id="historyModal">
+        <div class="modal-content">
+            <h3>📋 History</h3>
+            <input type="date" id="historyDate" onchange="loadHistory()" style="width:100%; padding:10px; margin-bottom:15px;">
+            <div id="historyList"></div>
+            <button onclick="closeModal('historyModal')" class="main-btn" style="background:gray;">Close</button>
+        </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, update, push, get, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, update, push, get, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = { databaseURL: "https://cartracker-1df45-default-rtdb.firebaseio.com/" };
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Map Layers
         const streetL = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
         const satelliteL = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
-        
         const map = L.map('map', { zoomControl: false, layers: [streetL] }).setView([14.5794, 121.0359], 15);
 
-        let vehicleMarkers = {};
-        let totalDistance = 0, lastPos = null, isFollowing = false;
+        let vehicleMarkers = {}, totalDistance = 0, lastPos = null, isFollowing = false;
 
-        window.toggleMapStyle = () => {
-            if (map.hasLayer(streetL)) {
-                map.removeLayer(streetL);
-                map.addLayer(satelliteL);
-            } else {
-                map.removeLayer(satelliteL);
-                map.addLayer(streetL);
-            }
-        };
-
-        window.toggleFollow = () => {
-            isFollowing = !isFollowing;
-            document.getElementById('followBtn').classList.toggle('active', isFollowing);
-        };
+        window.toggleMapStyle = () => map.hasLayer(streetL) ? (map.removeLayer(streetL), map.addLayer(satelliteL)) : (map.removeLayer(satelliteL), map.addLayer(streetL));
+        window.toggleFollow = () => { isFollowing = !isFollowing; document.getElementById('followBtn').classList.toggle('active', isFollowing); };
 
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
-            const driver = document.getElementById('driverPicker').value;
-            
+            const driverId = document.getElementById('driverPicker').value;
             if (!window.isTracking) {
                 window.watchID = navigator.geolocation.watchPosition(async (pos) => {
                     window.isTracking = true;
                     btn.innerText = "🛑 Stop Tracking"; btn.style.background = "#FF3B30";
-                    
                     const { latitude: lat, longitude: lng, speed: s } = pos.coords;
                     const speed = Math.round((s || 0) * 3.6);
-                    
                     if (isFollowing) map.panTo([lat, lng]);
-
-                    let battLevel = "--";
-                    try { const b = await navigator.getBattery(); battLevel = Math.round(b.level * 100); } catch(e){}
-                    document.getElementById('statBatt').innerText = battLevel;
-
-                    if (lastPos) {
-                        const d = calculateDistance(lastPos.lat, lastPos.lng, lat, lng);
-                        if (d > 0.002) totalDistance += d;
+                    
+                    let batt = "--"; 
+                    try { const b = await navigator.getBattery(); batt = Math.round(b.level * 100); } catch(e){}
+                    document.getElementById('statBatt').innerText = batt;
+                    
+                    if (lastPos) { 
+                        const d = calculateDistance(lastPos.lat, lastPos.lng, lat, lng); 
+                        if (d > 0.002) totalDistance += d; 
                     }
                     lastPos = { lat, lng };
-                    
                     document.getElementById('statDist').innerText = totalDistance.toFixed(2);
                     document.getElementById('liveSpeed').innerText = speed;
                     
-                    update(ref(db, `cars/${driver}`), { lat, lng, speed, battery: battLevel, lastUpdated: new Date().toISOString() });
+                    update(ref(db, `cars/${driverId}`), { 
+                        lat, lng, speed, battery: batt, 
+                        lastSeen: new Date().toLocaleTimeString(),
+                        status: "Active"
+                    });
                 }, null, { enableHighAccuracy: true });
             } else {
-                window.isTracking = false;
-                navigator.geolocation.clearWatch(window.watchID);
+                window.isTracking = false; navigator.geolocation.clearWatch(window.watchID);
                 btn.innerText = "📡 Start Tracking"; btn.style.background = "#007AFF";
+                update(ref(db, `cars/${driverId}`), { status: "Offline" });
             }
         };
-
-        // Real-time syncing of ALL vehicles on map
-        onValue(ref(db, 'cars'), (snapshot) => {
-            const data = snapshot.val();
-            if(!data) return;
-            for(let id in data) {
-                const { lat, lng } = data[id];
-                if(!vehicleMarkers[id]) {
-                    vehicleMarkers[id] = L.marker([lat, lng]).addTo(map).bindPopup(id.toUpperCase());
-                } else {
-                    vehicleMarkers[id].setLatLng([lat, lng]);
-                }
-            }
-        });
 
         window.updateDriverProfile = () => {
             const picker = document.getElementById('driverPicker');
             const name = picker.options[picker.selectedIndex].text;
             document.getElementById('displayDriver').innerText = name;
             document.getElementById('profilePic').src = name + ".jpg";
+            
+            // Fetch status/last seen for selected driver
+            onValue(ref(db, `cars/${picker.value}`), (s) => {
+                const data = s.val();
+                if(data) document.getElementById('lastUpdateTime').innerText = `${data.status} (${data.lastSeen || '--'})`;
+            });
         };
 
-        // Helper: Calculate distance between points
+        window.submitFuel = () => {
+            const liters = parseFloat(document.getElementById('fuelLiters').value);
+            if (!liters || totalDistance <= 0) return alert("Enter valid liters and ensure distance > 0");
+            const eff = (totalDistance / liters).toFixed(2);
+            const driver = document.getElementById('displayDriver').innerText;
+            push(ref(db, 'reports'), { driver, distance: totalDistance.toFixed(2), liters, efficiency: eff, date: new Date().toLocaleDateString() });
+            totalDistance = 0; document.getElementById('statDist').innerText = "0.00";
+            closeModal('fuelModal'); alert("Log Saved!");
+        };
+
+        window.exportToExcel = async () => {
+            const snap = await get(ref(db, 'reports'));
+            const data = snap.val();
+            if(!data) return alert("No data to export");
+            const rows = [["Driver", "Distance (km)", "Liters", "Efficiency (km/L)", "Date"]];
+            Object.values(data).forEach(r => rows.push([r.driver, r.distance, r.liters, r.efficiency, r.date]));
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "FleetReport");
+            XLSX.writeFile(wb, "iMerch_Fleet_Report.xlsx");
+        };
+
+        window.clearLogs = async () => {
+            if(confirm("Clear all report data?")) {
+                await remove(ref(db, 'reports'));
+                alert("Logs cleared.");
+                closeModal('chartModal');
+            }
+        };
+
+        window.checkAdminPass = async () => {
+            if(prompt("Admin PIN:") === "1234") {
+                document.getElementById('chartModal').style.display='flex';
+                const snap = await get(ref(db, 'reports'));
+                const list = document.getElementById('leaderboardList');
+                list.innerHTML = "";
+                if(snap.val()) {
+                    Object.values(snap.val()).forEach(r => {
+                        list.innerHTML += `<div class="leaderboard-item"><span>${r.driver} (${r.date})</span><b>${r.efficiency} km/L</b></div>`;
+                    });
+                } else { list.innerHTML = "No records found."; }
+            }
+        };
+
+        onValue(ref(db, 'cars'), (s) => {
+            const data = s.val(); if(!data) return;
+            for(let id in data) {
+                const { lat, lng, status } = data[id];
+                if(!vehicleMarkers[id]) vehicleMarkers[id] = L.marker([lat, lng]).addTo(map).bindPopup(id.toUpperCase());
+                else vehicleMarkers[id].setLatLng([lat, lng]);
+            }
+        });
+
         function calculateDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const R = 6371; const dLat = (lat2 - lat1) * Math.PI / 180; const dLon = (lon2 - lon1) * Math.PI / 180;
             const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
-        // Modal Controls
         window.openFuelModal = () => document.getElementById('fuelModal').style.display='flex';
-        window.openHistoryModal = () => document.getElementById('historyModal').style.display='flex';
         window.closeModal = (id) => document.getElementById(id).style.display='none';
         window.toggleTheme = () => document.body.classList.toggle('dark-mode');
-        window.checkAdminPass = () => { if(prompt("PIN:")==="1234") document.getElementById('chartModal').style.display='flex'; };
-
+        window.updateDriverProfile(); // Run on load
     </script>
 </body>
 </html>
