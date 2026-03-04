@@ -56,8 +56,6 @@
         
         .stats-row { display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; padding-top: 5px; border-top: 1px solid #eee; margin-top: 5px; }
         .speed-val { color: #007AFF; font-size: 14px; }
-        
-        /* Flag Style */
         .km-flag { background: #FF3B30; color: white; border-radius: 50%; padding: 2px 6px; font-size: 10px; font-weight: bold; border: 2px solid white; text-align: center; }
     </style>
 </head>
@@ -124,8 +122,24 @@
         </div>
     </div>
 
-    <div id="chartModal"><div class="modal-content"><canvas id="fuelChart"></canvas><button class="export-btn" onclick="closeChartModal()">Close</button></div></div>
-    <div id="fuelModal"><div class="modal-content"><h3>⛽ Fuel Entry</h3><input type="number" id="fuelAmount" placeholder="PHP"><input type="number" id="fuelLiters" placeholder="Liters"><button class="export-btn" onclick="submitFuel()">Save</button><button onclick="closeFuelModal()">Cancel</button></div></div>
+    <div id="chartModal">
+        <div class="modal-content">
+            <h3>📊 Fleet Report</h3>
+            <canvas id="fuelChart"></canvas>
+            <button class="export-btn" onclick="exportDataToExcel()">📂 Export to Excel</button>
+            <button class="export-btn" style="background:gray;" onclick="closeChartModal()">Close</button>
+        </div>
+    </div>
+
+    <div id="fuelModal">
+        <div class="modal-content">
+            <h3>⛽ Fuel Entry</h3>
+            <input type="number" id="fuelAmount" placeholder="PHP Amount">
+            <input type="number" id="fuelLiters" placeholder="Liters">
+            <button class="export-btn" onclick="submitFuel()">Save Log</button>
+            <button onclick="closeFuelModal()">Cancel</button>
+        </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
@@ -141,120 +155,122 @@
         
         let historyLayer = null;
         let markersGroup = L.layerGroup().addTo(map);
+        let vehicleMarkers = {};
         let wakeLock = null;
-        document.getElementById('histDate').value = new Date().toISOString().split('T')[0];
+        let fuelChartInstance = null;
 
-        // --- DISTANCE CALC ---
-        function calculateDistance(coords) {
-            let total = 0;
-            for (let i = 0; i < coords.length - 1; i++) {
-                const p1 = coords[i], p2 = coords[i+1];
-                const R = 6371; 
-                const dLat = (p2[0]-p1[0]) * Math.PI / 180, dLon = (p2[1]-p1[1]) * Math.PI / 180;
-                const a = Math.sin(dLat/2)**2 + Math.cos(p1[0]*Math.PI/180) * Math.cos(p2[0]*Math.PI/180) * Math.sin(dLon/2)**2;
-                total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-            }
-            return total;
+        // --- CUSTOM ICONS ---
+        const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png', iconSize: [45, 45], iconAnchor: [22, 22] });
+        const bikeIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png', iconSize: [45, 45], iconAnchor: [22, 22] });
+
+        function getVehicleType(driver) {
+            const cars = ['ron', 'mico', 'darwin'];
+            return cars.includes(driver.toLowerCase()) ? carIcon : bikeIcon;
         }
 
-        // --- TRACKING ---
-        let isTracking = false;
-        let watchID = null;
-
+        // --- TRACKING & AUTO-CENTER ---
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
             const driver = document.getElementById('driverPicker').value;
             const today = new Date().toISOString().split('T')[0];
 
-            if (!isTracking) {
-                isTracking = true;
+            if (!window.isTracking) {
+                window.isTracking = true;
                 btn.innerText = "🛑 Stop Tracking";
                 btn.style.background = "#FF3B30";
 
-                watchID = navigator.geolocation.watchPosition(async pos => {
+                window.watchID = navigator.geolocation.watchPosition(async pos => {
                     const lat = pos.coords.latitude, lng = pos.coords.longitude;
-                    const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0; // m/s to km/h
+                    const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0;
                     let batt = 0;
                     try { const b = await navigator.getBattery(); batt = Math.round(b.level * 100); } catch(e){}
-                    
+
+                    // Update Firebase
                     update(ref(db, `cars/${driver}`), { lat, lng, speed, batt, lastUpdated: Date.now() });
                     push(ref(db, `history/${driver}/${today}`), { lat, lng, speed, time: Date.now(), batt });
-                    
+
+                    // Auto-Center Map
+                    map.panTo([lat, lng]);
+
                     document.getElementById('liveSpeed').innerText = `Speed: ${speed} km/h`;
-                }, null, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 });
+                }, null, { enableHighAccuracy: true });
 
                 if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
             } else {
-                isTracking = false;
-                navigator.geolocation.clearWatch(watchID);
+                window.isTracking = false;
+                navigator.geolocation.clearWatch(window.watchID);
                 if (wakeLock) wakeLock.release();
                 btn.innerText = "📡 Start Tracking";
                 btn.style.background = "#007AFF";
             }
         };
 
-        // --- PROFILE & LIVE STATS ---
-        window.updateDriverProfile = () => {
-            const p = document.getElementById('driverPicker');
-            const driver = p.value;
-            document.getElementById('profilePic').src = driver + ".jpg";
-            document.getElementById('displayDriver').innerText = p.options[p.selectedIndex].text;
-            
-            const today = new Date().toISOString().split('T')[0];
-            onValue(ref(db, `history/${driver}/${today}`), (snapshot) => {
-                if(snapshot.exists()){
-                    const points = Object.values(snapshot.val()).sort((a,b) => a.time - b.time);
-                    const coords = points.map(p => [p.lat, p.lng]);
-                    document.getElementById('statDist').innerText = calculateDistance(coords).toFixed(2);
-                    document.getElementById('statBatt').innerText = points[points.length-1].batt || "--";
+        // --- REAL-TIME MARKER UPDATES ---
+        onValue(ref(db, 'cars'), (snapshot) => {
+            const data = snapshot.val();
+            if(!data) return;
+            for(let driver in data) {
+                const { lat, lng } = data[driver];
+                if(!vehicleMarkers[driver]) {
+                    vehicleMarkers[driver] = L.marker([lat, lng], { icon: getVehicleType(driver) }).addTo(map).bindPopup(driver.toUpperCase());
+                } else {
+                    vehicleMarkers[driver].setLatLng([lat, lng]);
+                    vehicleMarkers[driver].setIcon(getVehicleType(driver));
                 }
+            }
+        });
+
+        // --- RESTORED FUEL & REPORT LOGIC ---
+        window.submitFuel = async () => {
+            const driver = document.getElementById('driverPicker').value;
+            const amount = document.getElementById('fuelAmount').value;
+            const liters = document.getElementById('fuelLiters').value;
+            if(!amount || !liters) return alert("Please fill all fields");
+            await push(ref(db, 'fuelLogs'), { driver, amount, liters, date: new Date().toLocaleDateString(), time: Date.now() });
+            alert("Fuel entry saved!");
+            closeFuelModal();
+        };
+
+        window.loadDashboard = async () => {
+            const snap = await get(ref(db, 'fuelLogs'));
+            if(!snap.exists()) return;
+            const logs = Object.values(snap.val());
+            const dataMap = {};
+            logs.forEach(l => dataMap[l.driver] = (dataMap[l.driver] || 0) + parseFloat(l.amount));
+            
+            if(fuelChartInstance) fuelChartInstance.destroy();
+            fuelChartInstance = new Chart(document.getElementById('fuelChart'), {
+                type: 'bar',
+                data: { labels: Object.keys(dataMap), datasets: [{ label: 'Total PHP Spent', data: Object.values(dataMap), backgroundColor: '#007AFF' }] }
             });
         };
 
-        // --- HISTORY WITH KM FLAGS ---
-        window.loadRouteHistory = async () => {
-            const driver = document.getElementById('histDriver').value;
-            const date = document.getElementById('histDate').value;
-            const snapshot = await get(ref(db, `history/${driver}/${date}`));
-            if(!snapshot.exists()) return alert("No logs found.");
-            
-            const points = Object.values(snapshot.val()).sort((a,b) => a.time - b.time);
-            const coords = points.map(p => [p.lat, p.lng]);
-            
-            if(historyLayer) map.removeLayer(historyLayer);
-            markersGroup.clearLayers();
-
-            historyLayer = L.polyline(coords, { color: '#007AFF', weight: 4 }).addTo(map);
-            
-            // Add Flags per KM
-            let runningDist = 0;
-            let lastFlagKm = 0;
-            for (let i = 1; i < points.length; i++) {
-                runningDist += calculateDistance([[points[i-1].lat, points[i-1].lng], [points[i].lat, points[i].lng]]);
-                if (Math.floor(runningDist) > lastFlagKm) {
-                    lastFlagKm = Math.floor(runningDist);
-                    L.marker([points[i].lat, points[i].lng], {
-                        icon: L.divIcon({ className: 'km-flag', html: lastFlagKm })
-                    }).addTo(markersGroup);
-                }
-            }
-
-            map.fitBounds(historyLayer.getBounds());
-            document.getElementById('routeStatus').style.display = 'block';
-            closeRouteModal();
+        window.exportDataToExcel = async () => {
+            const snap = await get(ref(db, 'fuelLogs'));
+            if(!snap.exists()) return alert("No data to export");
+            const ws = XLSX.utils.json_to_sheet(Object.values(snap.val()));
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Fuel_History");
+            XLSX.writeFile(wb, "iMerch_Fleet_Report.xlsx");
         };
 
-        window.clearRouteLayer = () => { 
-            if(historyLayer) map.removeLayer(historyLayer); 
-            markersGroup.clearLayers();
-            document.getElementById('routeStatus').style.display = 'none'; 
+        window.updateDriverProfile = () => {
+            const picker = document.getElementById('driverPicker');
+            const driver = picker.value;
+            document.getElementById('profilePic').src = driver + ".jpg"; // Restored Ron Sarmenta.jpg logic
+            document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
         };
 
-        window.updateDriverProfile();
-        // Initialize simple modal openers
+        // UI Handlers
         window.openRouteModal = () => document.getElementById('routeModal').style.display = 'flex';
         window.closeRouteModal = () => document.getElementById('routeModal').style.display = 'none';
+        window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
+        window.closeFuelModal = () => document.getElementById('fuelModal').style.display = 'none';
+        window.openChartModal = () => { document.getElementById('chartModal').style.display = 'flex'; window.loadDashboard(); };
+        window.closeChartModal = () => document.getElementById('chartModal').style.display = 'none';
         window.toggleTheme = () => document.body.classList.toggle('dark-mode');
+
+        window.updateDriverProfile();
     </script>
 </body>
 </html>
