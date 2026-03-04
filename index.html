@@ -15,7 +15,9 @@
         
         body, html, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #f0f0f0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         
-        .logo-header { position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 1001; background: var(--bg); padding: 10px 25px; border-radius: 60px; box-shadow: 0 8px 25px rgba(0,0,0,0.15); display: flex; flex-direction: column; align-items: center; border: 1.5px solid var(--border); }
+        /* Restored Header with Uploaded Logo */
+        .logo-header { position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 1001; background: var(--bg); padding: 8px 20px; border-radius: 60px; box-shadow: 0 8px 25px rgba(0,0,0,0.15); display: flex; align-items: center; gap: 10px; border: 1.5px solid var(--border); }
+        .header-logo-img { width: 35px; height: 35px; border-radius: 50%; object-fit: contain; }
         .logo-text { font-weight: 800; font-size: 18px; color: var(--text); }
         .logo-text span { color: #007AFF; }
 
@@ -37,10 +39,12 @@
         #chartModal, #fuelModal, #historyModal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; display: none; align-items: center; justify-content: center; }
         .modal-content { background: var(--bg); padding: 20px; border-radius: 20px; width: 85%; max-width: 400px; color: var(--text); max-height: 85vh; overflow-y: auto; }
         .leaderboard-item { display: flex; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee; font-size: 14px; }
+        .history-entry { padding: 10px; border-bottom: 1px solid #ddd; font-size: 12px; }
     </style>
 </head>
 <body class="light-mode">
     <div class="logo-header">
+        <img src="i-Merch Media Logo.jpg" class="header-logo-img" alt="iMerch Logo">
         <div class="logo-text">Fleet<span>Link</span></div>
     </div>
 
@@ -111,8 +115,8 @@
 
     <div id="historyModal">
         <div class="modal-content">
-            <h3>📋 History</h3>
-            <input type="date" id="historyDate" onchange="loadHistory()" style="width:100%; padding:10px; margin-bottom:15px;">
+            <h3>📋 History Log</h3>
+            <input type="date" id="historyDate" onchange="loadHistory()" style="width:100%; padding:10px; margin-bottom:15px; border:1px solid #ddd; border-radius:10px;">
             <div id="historyList"></div>
             <button onclick="closeModal('historyModal')" class="main-btn" style="background:gray;">Close</button>
         </div>
@@ -121,7 +125,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, update, push, get, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, update, push, get, onValue, remove, set } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = { databaseURL: "https://cartracker-1df45-default-rtdb.firebaseio.com/" };
         const app = initializeApp(firebaseConfig);
@@ -139,6 +143,8 @@
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
             const driverId = document.getElementById('driverPicker').value;
+            const driverName = document.getElementById('displayDriver').innerText;
+
             if (!window.isTracking) {
                 window.watchID = navigator.geolocation.watchPosition(async (pos) => {
                     window.isTracking = true;
@@ -159,11 +165,19 @@
                     document.getElementById('statDist').innerText = totalDistance.toFixed(2);
                     document.getElementById('liveSpeed').innerText = speed;
                     
+                    const timeStamp = new Date().toLocaleTimeString();
+                    const dateKey = new Date().toISOString().split('T')[0];
+
+                    // Update Real-time Status
                     update(ref(db, `cars/${driverId}`), { 
                         lat, lng, speed, battery: batt, 
-                        lastSeen: new Date().toLocaleTimeString(),
+                        lastSeen: timeStamp,
                         status: "Active"
                     });
+
+                    // Update History Log
+                    push(ref(db, `history/${driverId}/${dateKey}`), { lat, lng, speed, time: timeStamp });
+
                 }, null, { enableHighAccuracy: true });
             } else {
                 window.isTracking = false; navigator.geolocation.clearWatch(window.watchID);
@@ -178,7 +192,6 @@
             document.getElementById('displayDriver').innerText = name;
             document.getElementById('profilePic').src = name + ".jpg";
             
-            // Fetch status/last seen for selected driver
             onValue(ref(db, `cars/${picker.value}`), (s) => {
                 const data = s.val();
                 if(data) document.getElementById('lastUpdateTime').innerText = `${data.status} (${data.lastSeen || '--'})`;
@@ -195,6 +208,19 @@
             closeModal('fuelModal'); alert("Log Saved!");
         };
 
+        window.loadHistory = async () => {
+            const date = document.getElementById('historyDate').value;
+            const driverId = document.getElementById('driverPicker').value;
+            const snap = await get(ref(db, `history/${driverId}/${date}`));
+            const list = document.getElementById('historyList');
+            list.innerHTML = "";
+            if (snap.exists()) {
+                Object.values(snap.val()).forEach(h => {
+                    list.innerHTML += `<div class="history-entry"><b>${h.time}</b>: ${h.speed}km/h at [${h.lat.toFixed(4)}, ${h.lng.toFixed(4)}]</div>`;
+                });
+            } else { list.innerHTML = "No history for this date."; }
+        };
+
         window.exportToExcel = async () => {
             const snap = await get(ref(db, 'reports'));
             const data = snap.val();
@@ -205,14 +231,6 @@
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "FleetReport");
             XLSX.writeFile(wb, "iMerch_Fleet_Report.xlsx");
-        };
-
-        window.clearLogs = async () => {
-            if(confirm("Clear all report data?")) {
-                await remove(ref(db, 'reports'));
-                alert("Logs cleared.");
-                closeModal('chartModal');
-            }
         };
 
         window.checkAdminPass = async () => {
@@ -232,7 +250,7 @@
         onValue(ref(db, 'cars'), (s) => {
             const data = s.val(); if(!data) return;
             for(let id in data) {
-                const { lat, lng, status } = data[id];
+                const { lat, lng } = data[id];
                 if(!vehicleMarkers[id]) vehicleMarkers[id] = L.marker([lat, lng]).addTo(map).bindPopup(id.toUpperCase());
                 else vehicleMarkers[id].setLatLng([lat, lng]);
             }
@@ -245,9 +263,10 @@
         }
 
         window.openFuelModal = () => document.getElementById('fuelModal').style.display='flex';
+        window.openHistoryModal = () => document.getElementById('historyModal').style.display='flex';
         window.closeModal = (id) => document.getElementById(id).style.display='none';
         window.toggleTheme = () => document.body.classList.toggle('dark-mode');
-        window.updateDriverProfile(); // Run on load
+        window.updateDriverProfile();
     </script>
 </body>
 </html>
