@@ -1,255 +1,217 @@
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-    import { getDatabase, ref, update, push, get, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+<body class="light-mode">
+    <div class="logo-header">
+        <img src="i-Merch Media Logo.png" class="header-logo-img" onerror="this.style.display='none'">
+        <div class="logo-text">Fleet<span>Link</span></div>
+    </div>
 
-    const firebaseConfig = { databaseURL: "https://cartracker-1df45-default-rtdb.firebaseio.com/" };
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+    <div class="side-controls">
+        <div class="control-btn" onclick="toggleTheme()" title="Toggle Dark Mode">🌓</div>
+        <div class="control-btn" id="followBtn" onclick="toggleFollowMe()" title="Follow Me">📍</div>
+        <div class="control-btn" onclick="toggleMapStyle()" title="Satellite View">🛰️</div>
+        <div class="control-btn" onclick="openRouteModal()" title="History">🗺️</div>
+    </div>
 
-    const streetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
-    const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
-    const map = L.map('map', { zoomControl: false, layers: [streetMap] }).setView([14.5794, 121.0359], 15);
+    <div id="map" style="height: 100vh; width: 100vw;"></div>
     
-    let currentMapStyle = 'street';
-    let vehicleMarkers = {};
-    let selectedType = 'car';
-    let fuelChartInstance = null;
-    let followMe = false;
+    <div class="menu">
+        <div class="profile-section">
+            <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" onerror="this.src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png'">
+            <div>
+                <b id="displayDriver" style="font-size: 18px;">Ron Sarmenta</b><br>
+                <span class="update-time">Last Seen: <span id="lastUpdateTime">--:--:--</span></span>
+            </div>
+        </div>
 
-    // Stats Variables
-    let totalDistance = 0;
-    let lastPosition = null;
-    let deviceBattery = 0; // Changed from "--" to 0 for cleaner logic
+        <select id="driverPicker" onchange="updateDriverProfile()" style="margin: 10px 0;">
+            <option value="ron">Ron Sarmenta</option>
+            <option value="mico">Mico Balmaceda</option>
+            <option value="darwin">Darwin Pengson</option>
+            <option value="eljhay">Eljhay Ramos</option>
+            <option value="vergel">Vergel Archer</option>
+        </select>
 
-    const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png', iconSize: [40, 40], iconAnchor: [20, 20] });
-    const bikeIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png', iconSize: [40, 40], iconAnchor: [20, 20] });
+        <div class="stats-container">
+            <div class="speed-display">
+                <span id="liveSpeed" class="speed-val">0</span>
+                <span class="speed-unit">km/h</span>
+            </div>
+            <div class="other-stats">
+                <div class="stat-item">🔋 <span id="statBatt">--</span>%</div>
+                <div class="stat-item">🏁 <span id="statDist">0.00</span> km</div>
+            </div>
+        </div>
 
-    // --- Enhanced Battery Management ---
-    async function initBattery() {
-        if ('getBattery' in navigator) {
-            const battery = await navigator.getBattery();
-            
-            const syncBattery = () => {
-                deviceBattery = Math.round(battery.level * 100);
-                document.getElementById('statBatt').innerText = deviceBattery;
-            };
+        <div style="display:flex; gap:8px; margin-bottom: 12px;">
+            <button id="typeCar" class="type-btn active" onclick="setVehicleType('car')">🚗 Auto</button>
+            <button id="typeBike" class="type-btn" onclick="setVehicleType('bike')">🏍️ Motor</button>
+        </div>
 
-            syncBattery(); // Initial sync
-            battery.addEventListener('levelchange', syncBattery);
-            battery.addEventListener('chargingchange', syncBattery);
-        }
-    }
-    initBattery();
-
-    // --- Tracking Logic with Active Battery Refresh ---
-    window.toggleTracking = async () => {
-        const btn = document.getElementById('btn');
-        const driver = document.getElementById('driverPicker').value;
+        <button onclick="toggleTracking()" id="btn" class="main-btn">📡 Start Tracking</button>
         
-        if (!window.isTracking) {
-            window.isTracking = true;
-            btn.innerText = "🛑 Stop Tracking"; btn.style.background = "#FF3B30";
+        <div class="section-label">History Management</div>
+        <div class="action-grid">
+            <button onclick="openFuelModal()" class="fuel-btn">⛽ Fuel Entry</button>
+            <button onclick="checkAdminPass()" class="fuel-btn" style="background:#5856D6;">📊 Fleet Report</button>
+        </div>
+    </div>
+
+    <div id="chartModal"><div class="modal-content"><h3>📊 Fleet Fuel Analysis</h3><canvas id="fuelChart"></canvas><button class="main-btn" onclick="exportFuelCSV()" style="background:#34C759; margin-top:10px;">Download CSV</button><button class="main-btn" style="background:gray; margin-top:5px;" onclick="closeChartModal()">Close</button></div></div>
+    <div id="routeModal"><div class="modal-content"><h3>🗺️ View History</h3><select id="histDriver"><option value="ron">Ron Sarmenta</option></select><input type="date" id="histDate"><button class="main-btn" onclick="loadRouteHistory()">Analyze</button><button onclick="closeRouteModal()" style="border:none; background:none; margin-top:10px; width:100%;">Cancel</button></div></div>
+    <div id="fuelModal"><div class="modal-content"><h3>⛽ Fuel Entry</h3><input type="number" id="fuelAmount" placeholder="PHP Amount"><input type="number" id="fuelLiters" placeholder="Liters"><button class="main-btn" onclick="submitFuel()">Save Log</button><button onclick="closeFuelModal()" style="border:none; background:none; margin-top:10px; width:100%;">Cancel</button></div></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getDatabase, ref, update, push, get, onValue, remove } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+        const firebaseConfig = { databaseURL: "https://cartracker-1df45-default-rtdb.firebaseio.com/" };
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // Map Setup with Error Handling
+        const streetMap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png');
+        const satelliteMap = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}');
+        
+        let map;
+        try {
+            map = L.map('map', { zoomControl: false, layers: [streetMap] }).setView([14.5794, 121.0359], 15);
+        } catch (e) {
+            console.error("Map initialization failed:", e);
+        }
+        
+        let currentMapStyle = 'street';
+        let vehicleMarkers = {};
+        let selectedType = 'car';
+        let fuelChartInstance = null;
+        let followMe = false;
+        let totalDistance = 0;
+        let lastPosition = null;
+        let deviceBattery = 0;
+
+        const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png', iconSize: [40, 40], iconAnchor: [20, 20] });
+        const bikeIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png', iconSize: [40, 40], iconAnchor: [20, 20] });
+
+        // Battery Sync
+        async function initBattery() {
+            if ('getBattery' in navigator) {
+                const battery = await navigator.getBattery();
+                const sync = () => {
+                    deviceBattery = Math.round(battery.level * 100);
+                    const el = document.getElementById('statBatt');
+                    if(el) el.innerText = deviceBattery;
+                };
+                sync();
+                battery.addEventListener('levelchange', sync);
+            }
+        }
+        initBattery();
+
+        // Distance Calc
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
+        // Tracking Export to Global
+        window.toggleTracking = async () => {
+            const btn = document.getElementById('btn');
+            const driver = document.getElementById('driverPicker').value;
             
-            window.watchID = navigator.geolocation.watchPosition(async (pos) => {
-                const lat = pos.coords.latitude; 
-                const lng = pos.coords.longitude;
-                const speed = Math.round((pos.coords.speed || 0) * 3.6);
-                const now = new Date().toLocaleTimeString();
+            if (!window.isTracking) {
+                window.isTracking = true;
+                btn.innerText = "🛑 Stop Tracking"; btn.style.background = "#FF3B30";
                 
-                // Force a hardware battery check during GPS active session
-                if ('getBattery' in navigator) {
-                    const b = await navigator.getBattery();
-                    deviceBattery = Math.round(b.level * 100);
-                }
+                window.watchID = navigator.geolocation.watchPosition(async (pos) => {
+                    const lat = pos.coords.latitude; 
+                    const lng = pos.coords.longitude;
+                    const speed = Math.round((pos.coords.speed || 0) * 3.6);
+                    const now = new Date().toLocaleTimeString();
 
-                if (lastPosition) {
-                    const dist = calculateDistance(lastPosition.lat, lastPosition.lng, lat, lng);
-                    // Filter jitter: Only add distance if moved > 5 meters
-                    if (dist > 0.005) totalDistance += dist;
-                }
-                lastPosition = { lat, lng };
+                    if (lastPosition) {
+                        const dist = calculateDistance(lastPosition.lat, lastPosition.lng, lat, lng);
+                        if (dist > 0.005) totalDistance += dist;
+                    }
+                    lastPosition = { lat, lng };
 
-                // Update UI elements
-                document.getElementById('liveSpeed').innerText = speed;
-                document.getElementById('statDist').innerText = totalDistance.toFixed(2);
-                document.getElementById('statBatt').innerText = deviceBattery;
-                document.getElementById('lastUpdateTime').innerText = now;
-                
-                // Push comprehensive update to Firebase
-                update(ref(db, `cars/${driver}`), { 
-                    lat, lng, speed, 
-                    distance: totalDistance.toFixed(2),
-                    battery: deviceBattery,
-                    type: selectedType, 
-                    lastUpdated: now 
-                });
+                    document.getElementById('liveSpeed').innerText = speed;
+                    document.getElementById('statDist').innerText = totalDistance.toFixed(2);
+                    document.getElementById('lastUpdateTime').innerText = now;
+                    
+                    update(ref(db, `cars/${driver}`), { 
+                        lat, lng, speed, 
+                        distance: totalDistance.toFixed(2),
+                        battery: deviceBattery,
+                        type: selectedType, 
+                        lastUpdated: now 
+                    });
 
-                if(followMe) map.panTo([lat, lng]);
-
-            }, (err) => console.warn(err), { 
-                enableHighAccuracy: true,
-                maximumAge: 0,
-                timeout: 5000 
-            });
-        } else {
-            window.isTracking = false;
-            navigator.geolocation.clearWatch(window.watchID);
-            btn.innerText = "📡 Start Tracking"; btn.style.background = "#007AFF";
-            lastPosition = null;
-        }
-    };
-
-    // --- Helper Functions ---
-    function calculateDistance(lat1, lon1, lat2, lon2) {
-        const R = 6371; 
-        const dLat = (lat2 - lat1) * Math.PI / 180;
-        const dLon = (lon2 - lon1) * Math.PI / 180;
-        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                  Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                  Math.sin(dLon/2) * Math.sin(dLon/2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-        return R * c;
-    }
-
-    // --- Remaining Control Logic (Maps, Modals, Themes) ---
-    window.toggleFollowMe = () => {
-        followMe = !followMe;
-        const fBtn = document.getElementById('followBtn');
-        fBtn.classList.toggle('active', followMe);
-        if(followMe && lastPosition) map.panTo([lastPosition.lat, lastPosition.lng]);
-    };
-
-    window.toggleMapStyle = (forceStyle) => {
-        if (forceStyle === 'satellite' || (forceStyle === undefined && currentMapStyle === 'street')) {
-            map.removeLayer(streetMap); satelliteMap.addTo(map); currentMapStyle = 'satellite';
-        } else {
-            map.removeLayer(satelliteMap); streetMap.addTo(map); currentMapStyle = 'street';
-        }
-    };
-
-    window.setVehicleType = (type) => {
-        selectedType = type;
-        const driver = document.getElementById('driverPicker').value;
-        document.getElementById('typeCar').classList.toggle('active', type === 'car');
-        document.getElementById('typeBike').classList.toggle('active', type === 'bike');
-        update(ref(db, `cars/${driver}`), { type: type });
-    };
-
-    window.submitFuel = async () => {
-        const amount = document.getElementById('fuelAmount').value;
-        const liters = document.getElementById('fuelLiters').value;
-        const driver = document.getElementById('driverPicker').value;
-        if(!amount || !liters) return alert("Fill all fields");
-        await push(ref(db, `fuelLogs/${driver}`), {
-            amount: parseFloat(amount),
-            liters: parseFloat(liters),
-            date: new Date().toLocaleDateString(),
-            timestamp: Date.now()
-        });
-        alert("Fuel Logged!");
-        closeFuelModal();
-    };
-
-    window.exportFuelCSV = async () => {
-        const snapshot = await get(ref(db, 'fuelLogs'));
-        const data = snapshot.val();
-        if(!data) return alert("No data to export");
-        let exportData = [];
-        for(let driver in data) {
-            for(let logId in data[driver]) {
-                const log = data[driver][logId];
-                exportData.push({ Driver: driver.toUpperCase(), Date: log.date, Amount_PHP: log.amount, Liters: log.liters });
-            }
-        }
-        const ws = XLSX.utils.json_to_sheet(exportData);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Fuel Logs");
-        XLSX.writeFile(wb, `Fleet_Fuel_Report_${new Date().toLocaleDateString()}.csv`);
-    };
-
-    window.updateChart = async () => {
-        const snapshot = await get(ref(db, 'fuelLogs'));
-        const data = snapshot.val();
-        const labels = [];
-        const amounts = [];
-        if(data) {
-            for(let driver in data) {
-                labels.push(driver.toUpperCase());
-                let total = 0;
-                for(let log in data[driver]) total += data[driver][log].amount;
-                amounts.push(total);
-            }
-        }
-        const ctx = document.getElementById('fuelChart').getContext('2d');
-        if(fuelChartInstance) fuelChartInstance.destroy();
-        fuelChartInstance = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: labels,
-                datasets: [{ label: 'Total Spending (PHP)', data: amounts, backgroundColor: '#007AFF' }]
-            },
-            options: { responsive: true, maintainAspectRatio: true }
-        });
-        document.getElementById('chartModal').style.display = 'flex';
-    };
-
-    window.checkAdminPass = () => { 
-        if (prompt("Admin Password:") === "1234") window.updateChart(); 
-        else alert("Incorrect Password"); 
-    };
-
-    window.adminClearLogs = async () => {
-        if(prompt("Enter Password to Clear Logs:") === "1234") {
-            if(confirm("Are you sure? This cannot be undone.")) {
-                await remove(ref(db, 'fuelLogs'));
-                alert("Logs cleared.");
-                window.updateChart();
-            }
-        } else {
-            alert("Incorrect Password.");
-        }
-    };
-
-    onValue(ref(db, 'cars'), (snapshot) => {
-        const data = snapshot.val();
-        if(!data) return;
-        const currentSelected = document.getElementById('driverPicker').value;
-        for(let driver in data) {
-            const { lat, lng, type, lastUpdated } = data[driver];
-            const icon = (type === 'bike') ? bikeIcon : carIcon;
-            if(!vehicleMarkers[driver]) {
-                vehicleMarkers[driver] = L.marker([lat, lng], { icon: icon }).addTo(map).bindPopup(driver.toUpperCase());
+                    if(followMe) map.panTo([lat, lng]);
+                }, null, { enableHighAccuracy: true });
             } else {
-                vehicleMarkers[driver].setLatLng([lat, lng]).setIcon(icon);
+                window.isTracking = false;
+                navigator.geolocation.clearWatch(window.watchID);
+                btn.innerText = "📡 Start Tracking"; btn.style.background = "#007AFF";
+                lastPosition = null;
             }
-            if(driver === currentSelected) {
-                document.getElementById('lastUpdateTime').innerText = lastUpdated || "--:--:--";
+        };
+
+        // UI Handlers
+        window.updateDriverProfile = async () => {
+            const picker = document.getElementById('driverPicker');
+            const driver = picker.value;
+            document.getElementById('profilePic').src = (driver === "ron") ? "Ron Sarmenta.jpg" : driver + ".jpg";
+            document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
+            
+            const snapshot = await get(ref(db, `cars/${driver}`));
+            const data = snapshot.val();
+            if(data) {
+                document.getElementById('lastUpdateTime').innerText = data.lastUpdated || "--:--:--";
+                document.getElementById('statDist').innerText = data.distance || "0.00";
+                if(data.lat && data.lng) map.setView([data.lat, data.lng], 15);
             }
-        }
-    });
+        };
 
-    window.updateDriverProfile = async () => {
-        const picker = document.getElementById('driverPicker');
-        const driver = picker.value;
-        document.getElementById('profilePic').src = (driver === "ron") ? "Ron Sarmenta.jpg" : driver + ".jpg";
-        document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
-        const snapshot = await get(ref(db, `cars/${driver}`));
-        const data = snapshot.val();
-        if(data) {
-            document.getElementById('lastUpdateTime').innerText = data.lastUpdated || "--:--:--";
-            document.getElementById('statDist').innerText = data.distance || "0.00";
-            if(data.lat && data.lng) map.setView([data.lat, data.lng], 15);
-        }
-        totalDistance = 0;
-        lastPosition = null;
-    };
+        window.toggleMapStyle = () => {
+            if (currentMapStyle === 'street') {
+                map.removeLayer(streetMap); satelliteMap.addTo(map); currentMapStyle = 'satellite';
+            } else {
+                map.removeLayer(satelliteMap); streetMap.addTo(map); currentMapStyle = 'street';
+            }
+        };
 
-    window.openRouteModal = () => document.getElementById('routeModal').style.display = 'flex';
-    window.closeRouteModal = () => document.getElementById('routeModal').style.display = 'none';
-    window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
-    window.closeFuelModal = () => document.getElementById('fuelModal').style.display = 'none';
-    window.closeChartModal = () => document.getElementById('chartModal').style.display = 'none';
-    window.toggleTheme = () => document.body.classList.toggle('dark-mode');
-    window.updateDriverProfile();
-</script>
+        window.toggleTheme = () => document.body.classList.toggle('dark-mode');
+        window.toggleFollowMe = () => {
+            followMe = !followMe;
+            document.getElementById('followBtn').classList.toggle('active', followMe);
+        };
+        
+        // Modals
+        window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
+        window.closeFuelModal = () => document.getElementById('fuelModal').style.display = 'none';
+        window.openRouteModal = () => document.getElementById('routeModal').style.display = 'flex';
+        window.closeRouteModal = () => document.getElementById('routeModal').style.display = 'none';
+        window.closeChartModal = () => document.getElementById('chartModal').style.display = 'none';
+
+        // Initial Call
+        window.updateDriverProfile();
+
+        // Firebase Sync for markers
+        onValue(ref(db, 'cars'), (snapshot) => {
+            const data = snapshot.val();
+            if(!data) return;
+            for(let d in data) {
+                const icon = (data[d].type === 'bike') ? bikeIcon : carIcon;
+                if(!vehicleMarkers[d]) {
+                    vehicleMarkers[d] = L.marker([data[d].lat, data[d].lng], { icon: icon }).addTo(map).bindPopup(d.toUpperCase());
+                } else {
+                    vehicleMarkers[d].setLatLng([data[d].lat, data[d].lng]).setIcon(icon);
+                }
+            }
+        });
+    </script>
+</body>
