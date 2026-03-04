@@ -115,30 +115,14 @@
 
     <div id="chartModal"><div class="modal-content"><h3>📊 Fleet Report</h3><canvas id="fuelChart"></canvas><button class="export-btn" onclick="exportDataToExcel()">📂 Export to Excel</button><button class="export-btn" style="background:gray;" onclick="closeChartModal()">Close</button></div></div>
     
-    <div id="routeModal">
-        <div class="modal-content">
-            <h3>🗺️ View History</h3>
-            <label>Driver:</label>
-            <select id="histDriver">
-                <option value="ron">Ron Sarmenta</option>
-                <option value="mico">Mico Balmaceda</option>
-                <option value="darwin">Darwin Pengson</option>
-                <option value="eljhay">Eljhay Ramos</option>
-                <option value="vergel">Vergel Apurillo</option>
-            </select>
-            <label>Date:</label>
-            <input type="date" id="histDate">
-            <button class="export-btn" onclick="loadRouteHistory()">Analyze Route</button>
-            <button onclick="closeRouteModal()" style="color:gray; border:none; background:none;">Cancel</button>
-        </div>
-    </div>
+    <div id="routeModal"><div class="modal-content"><h3>🗺️ View History</h3><select id="histDriver"><option value="ron">Ron Sarmenta</option><option value="mico">Mico Balmaceda</option><option value="darwin">Darwin Pengson</option><option value="eljhay">Eljhay Ramos</option><option value="vergel">Vergel Apurillo</option></select><input type="date" id="histDate"><button class="export-btn" onclick="loadRouteHistory()">Analyze Route</button><button onclick="closeRouteModal()" style="color:gray; border:none; background:none;">Cancel</button></div></div>
 
     <div id="fuelModal"><div class="modal-content"><h3>⛽ Fuel Entry</h3><input type="number" id="fuelAmount" placeholder="PHP Amount"><input type="number" id="fuelLiters" placeholder="Liters"><button class="export-btn" onclick="submitFuel()">Save Log</button><button onclick="closeFuelModal()">Cancel</button></div></div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, update, push, get, onValue, child } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, update, push, get, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = { databaseURL: "https://cartracker-1df45-default-rtdb.firebaseio.com/" };
         const app = initializeApp(firebaseConfig);
@@ -152,6 +136,7 @@
         let vehicleMarkers = {};
         let historyPath = null;
         let selectedType = 'car';
+        let myChart = null;
 
         const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png', iconSize: [45, 45], iconAnchor: [22, 22] });
         const bikeIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png', iconSize: [45, 45], iconAnchor: [22, 22] });
@@ -164,32 +149,52 @@
             }
         };
 
-        window.loadRouteHistory = async () => {
-            const driver = document.getElementById('histDriver').value;
-            const date = document.getElementById('histDate').value;
-            if (!date) return alert("Please select a date");
-
-            const historyRef = ref(db, `history/${driver}/${date}`);
-            const snapshot = await get(historyRef);
-
-            if (snapshot.exists()) {
-                const data = snapshot.val();
-                const points = Object.values(data).map(p => [p.lat, p.lng]);
-                
-                if (historyPath) map.removeLayer(historyPath);
-                historyPath = L.polyline(points, { color: '#007AFF', weight: 5, opacity: 0.7 }).addTo(map);
-                map.fitBounds(historyPath.getBounds());
-                
-                document.getElementById('routeStatus').style.display = 'block';
-                closeRouteModal();
-            } else {
-                alert("No history found for this date.");
-            }
+        window.setVehicleType = (type) => {
+            selectedType = type;
+            const driver = document.getElementById('driverPicker').value;
+            document.getElementById('typeCar').classList.toggle('active', type === 'car');
+            document.getElementById('typeBike').classList.toggle('active', type === 'bike');
+            
+            // Direct Satellite Switch for Motor
+            if (type === 'bike' && currentMapStyle === 'street') window.toggleMapStyle();
+            
+            // Realtime Firebase Update for Icon Change
+            update(ref(db, `cars/${driver}`), { type: type });
         };
 
-        window.clearHistory = () => {
-            if (historyPath) map.removeLayer(historyPath);
-            document.getElementById('routeStatus').style.display = 'none';
+        window.submitFuel = async () => {
+            const amount = document.getElementById('fuelAmount').value;
+            const liters = document.getElementById('fuelLiters').value;
+            const driver = document.getElementById('driverPicker').value;
+            if(!amount || !liters) return alert("Fill all fields");
+
+            const log = { amount: Number(amount), liters: Number(liters), driver: driver, date: new Date().toLocaleDateString(), timestamp: Date.now() };
+            await push(ref(db, 'fuelLogs'), log);
+            
+            alert("Fuel Saved!");
+            closeFuelModal();
+            updateChart(); // Direct chart update
+        };
+
+        const updateChart = async () => {
+            const snapshot = await get(ref(db, 'fuelLogs'));
+            if(!snapshot.exists()) return;
+            const data = snapshot.val();
+            const labels = [];
+            const amounts = [];
+            
+            Object.values(data).forEach(log => {
+                labels.push(log.date);
+                amounts.push(log.amount);
+            });
+
+            const ctx = document.getElementById('fuelChart').getContext('2d');
+            if(myChart) myChart.destroy();
+            myChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: labels, datasets: [{ label: 'Fuel Expense (PHP)', data: amounts, backgroundColor: '#FF9500' }] }
+            });
+            document.getElementById('chartModal').style.display = 'flex';
         };
 
         window.toggleTracking = async () => {
@@ -199,32 +204,19 @@
 
             if (!window.isTracking) {
                 window.isTracking = true;
-                btn.innerText = "🛑 Stop Tracking";
-                btn.style.background = "#FF3B30";
-
+                btn.innerText = "🛑 Stop Tracking"; btn.style.background = "#FF3B30";
                 window.watchID = navigator.geolocation.watchPosition(async pos => {
-                    const lat = pos.coords.latitude;
-                    const lng = pos.coords.longitude;
+                    const lat = pos.coords.latitude; const lng = pos.coords.longitude;
                     const speedKMH = Math.round((pos.coords.speed || 0) * 3.6);
-
-                    let battLevel = 0;
-                    try {
-                        const battery = await navigator.getBattery();
-                        battLevel = Math.round(battery.level * 100);
-                        document.getElementById('statBatt').innerText = battLevel;
-                    } catch(e) {}
-
                     document.getElementById('liveSpeed').innerText = `${speedKMH} km/h`;
                     map.panTo([lat, lng]);
-
-                    update(ref(db, `cars/${driver}`), { lat, lng, speed: speedKMH, batt: battLevel, type: selectedType, lastUpdated: Date.now() });
-                    push(ref(db, `history/${driver}/${today}`), { lat, lng, speed: speedKMH, batt: battLevel, time: Date.now() });
+                    update(ref(db, `cars/${driver}`), { lat, lng, speed: speedKMH, type: selectedType, lastUpdated: Date.now() });
+                    push(ref(db, `history/${driver}/${today}`), { lat, lng, speed: speedKMH, time: Date.now() });
                 }, null, { enableHighAccuracy: true });
             } else {
                 window.isTracking = false;
                 navigator.geolocation.clearWatch(window.watchID);
-                btn.innerText = "📡 Start Tracking";
-                btn.style.background = "#007AFF";
+                btn.innerText = "📡 Start Tracking"; btn.style.background = "#007AFF";
             }
         };
 
@@ -242,11 +234,18 @@
             }
         });
 
-        window.setVehicleType = (type) => {
-            selectedType = type;
-            document.getElementById('typeCar').classList.toggle('active', type === 'car');
-            document.getElementById('typeBike').classList.toggle('active', type === 'bike');
-            if (type === 'bike' && currentMapStyle === 'street') toggleMapStyle();
+        window.loadRouteHistory = async () => {
+            const driver = document.getElementById('histDriver').value;
+            const date = document.getElementById('histDate').value;
+            const snapshot = await get(ref(db, `history/${driver}/${date}`));
+            if (snapshot.exists()) {
+                const points = Object.values(snapshot.val()).map(p => [p.lat, p.lng]);
+                if (historyPath) map.removeLayer(historyPath);
+                historyPath = L.polyline(points, { color: '#007AFF', weight: 5 }).addTo(map);
+                map.fitBounds(historyPath.getBounds());
+                document.getElementById('routeStatus').style.display = 'block';
+                closeRouteModal();
+            } else { alert("No history found"); }
         };
 
         window.updateDriverProfile = () => {
@@ -256,7 +255,8 @@
             document.getElementById('displayDriver').innerText = picker.options[picker.selectedIndex].text;
         };
 
-        window.checkAdminPass = () => { if (prompt("Admin Password:") === "1234") document.getElementById('chartModal').style.display = 'flex'; else alert("Wrong Password"); };
+        window.checkAdminPass = () => { if (prompt("Admin Password:") === "1234") updateChart(); else alert("Wrong Password"); };
+        window.clearHistory = () => { if (historyPath) map.removeLayer(historyPath); document.getElementById('routeStatus').style.display = 'none'; };
         window.openRouteModal = () => document.getElementById('routeModal').style.display = 'flex';
         window.closeRouteModal = () => document.getElementById('routeModal').style.display = 'none';
         window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
