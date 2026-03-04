@@ -14,15 +14,15 @@
         body, html, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #f0f0f0; }
         .menu { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 280px; border: 2px solid #007AFF; transition: all 0.3s; }
         
-        /* Premium Driver Info Styles */
         .driver-container { display: flex; align-items: center; gap: 12px; width: 100%; padding-bottom: 10px; border-bottom: 1px solid #eee; margin-bottom: 5px; position: relative; }
-        .profile-img { width: 48px; height: 48px; border-radius: 50%; border: 2px solid #007AFF; object-fit: cover; background: #eee; }
+        .profile-img { width: 52px; height: 52px; border-radius: 50%; border: 2px solid #007AFF; object-fit: cover; background: #eee; }
         .driver-text { display: flex; flex-direction: column; align-items: flex-start; flex-grow: 1; }
         .driver-name { font-size: 16px; font-weight: bold; color: #222; }
         .driver-user { font-size: 11px; color: #007AFF; font-weight: 600; text-transform: lowercase; }
-        
-        /* New Last Seen Badge */
         .last-seen { font-size: 9px; color: #888; margin-top: 2px; font-style: italic; }
+
+        /* Driver Switcher Styling */
+        .driver-selector { width: 100%; padding: 8px; border-radius: 10px; border: 1px solid #ddd; font-size: 14px; margin-bottom: 5px; outline: none; }
 
         button { padding: 12px 20px; border-radius: 12px; border: none; background: #007AFF; color: white; font-weight: bold; width: 100%; cursor: pointer; font-size: 16px; margin-top: 5px; }
         .stats-row { display: flex; gap: 10px; align-items: center; margin: 5px 0; width: 100%; justify-content: space-around; }
@@ -39,10 +39,17 @@
 <body>
     <div id="map"></div>
     <div class="menu" id="mainMenu">
+        <select class="driver-selector" id="driverPicker" onchange="changeDriver()">
+            <option value="ron">Ron Sarmenta</option>
+            <option value="mico">Mico Balmaceda</option>
+            <option value="darwin">Darwin Pengson</option>
+            <option value="eljhay">Eljhay Ramos</option>
+        </select>
+
         <div class="driver-container">
-            <img src="icon.jpg" class="profile-img" alt="Driver" onerror="this.src='https://ui-avatars.com/api/?name=Ron+Sanity&background=007AFF&color=fff'">
+            <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" alt="Driver" onerror="this.src='https://ui-avatars.com/api/?name=Ron+Sanity&background=007AFF&color=fff'">
             <div class="driver-text">
-                <span class="driver-name" id="displayDriver">Ron Sanity</span>
+                <span class="driver-name" id="displayDriver">Ron Sarmenta</span>
                 <span class="driver-user" id="displayUser">@ronsarmenta_imerch</span>
                 <span class="last-seen" id="lastSeen">Last Seen: Just now</span>
             </div>
@@ -73,6 +80,25 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         
+        // Driver Database
+        const drivers = {
+            ron: { name: "Ron Sarmenta", user: "@ronsarmenta_imerch", img: "Ron Sarmenta.jpg" },
+            mico: { name: "Mico Balmaceda", user: "@mico_imerch", img: "mico.jpg" },
+            darwin: { name: "Darwin Pengson", user: "@darwin_imerch", img: "darwin.jpg" },
+            eljhay: { name: "Eljhay Ramos", user: "@eljhay_imerch", img: "eljhay.jpg" }
+        };
+
+        window.changeDriver = () => {
+            const selected = document.getElementById('driverPicker').value;
+            const info = drivers[selected];
+            document.getElementById('displayDriver').innerText = info.name;
+            document.getElementById('displayUser').innerText = info.user;
+            document.getElementById('profilePic').src = info.img;
+            document.getElementById('profilePic').onerror = () => {
+                document.getElementById('profilePic').src = `https://ui-avatars.com/api/?name=${info.name.replace(' ','+')}&background=007AFF&color=fff`;
+            };
+        };
+
         const fenceCenter = [14.5794, 121.0359]; 
         const fenceRadius = 1000; 
 
@@ -102,10 +128,10 @@
                     routePath.setLatLngs(pathArray);
                 }
 
+                // Sync UI with remote data if exists
                 if(data.driverName) document.getElementById('displayDriver').innerText = data.driverName;
                 if(data.username) document.getElementById('displayUser').innerText = "@" + data.username;
                 
-                // Update Last Seen Timestamp
                 if(data.lastUpdate) {
                     const updateDate = new Date(data.lastUpdate);
                     document.getElementById('lastSeen').innerText = "Last Seen: " + updateDate.toLocaleTimeString('en-PH');
