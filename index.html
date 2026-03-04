@@ -207,14 +207,14 @@
         let currentVehicle = 'car';
         let watchID = null;
 
-        // --- BATTERY BUG FIX ---
+        // --- REAL-TIME BATTERY CAPTURE ---
         async function getBatteryLevel() {
             try {
-                if (navigator.getBattery) {
+                if ('getBattery' in navigator) {
                     const battery = await navigator.getBattery();
                     return Math.round(battery.level * 100);
                 }
-            } catch (e) { console.error("Battery API not supported"); }
+            } catch (e) { console.warn("Battery API not supported on this device/browser."); }
             return null;
         }
 
@@ -244,29 +244,63 @@
             }
         };
 
+        // --- UPDATED TRACKING WITH GPS CHECK & POP-UP ---
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
             const driverKey = document.getElementById('driverPicker').value;
+
             if (!isTracking) {
-                isTracking = true;
-                btn.innerText = "🛑 Stop Tracking";
-                btn.classList.add('tracking-on');
+                // Check if Geolocation is supported
+                if (!navigator.geolocation) {
+                    alert("GPS Error: Your browser does not support Geolocation.");
+                    return;
+                }
+
+                btn.innerText = "⏳ Initializing GPS...";
+                
                 watchID = navigator.geolocation.watchPosition(async (pos) => {
+                    if (!isTracking) {
+                        isTracking = true;
+                        btn.innerText = "🛑 Stop Tracking";
+                        btn.classList.add('tracking-on');
+                    }
+
                     const { latitude: lat, longitude: lng, speed: s } = pos.coords;
                     const batt = await getBatteryLevel();
+                    
                     const updateData = { 
                         lat, lng, 
                         speed: Math.round((s || 0) * 3.6), 
                         driver: driverKey, 
                         vehicleType: currentVehicle, 
-                        lastUpdated: new Date().getTime() 
+                        lastUpdated: new Date().getTime(),
+                        battery: batt // Push realtime battery %
                     };
-                    if (batt !== null) updateData.battery = batt;
                     
                     update(ref(db, 'cars/car1'), updateData);
-                    push(ref(db, `archives/${driverKey}/${new Date().toISOString().split('T')[0]}`), { lat, lng, timestamp: new Date().getTime(), battery: batt });
+                    push(ref(db, `archives/${driverKey}/${new Date().toISOString().split('T')[0]}`), { 
+                        lat, lng, 
+                        timestamp: new Date().getTime(), 
+                        battery: batt 
+                    });
+                    
                     map.panTo([lat, lng]);
-                }, null, { enableHighAccuracy: true });
+                }, (err) => {
+                    // GPS ERROR POP-UP
+                    let msg = "GPS Error: Please enable location services.";
+                    if(err.code === 1) msg = "GPS Denied: Please allow location access in your settings.";
+                    if(err.code === 3) msg = "GPS Timeout: Searching for signal...";
+                    
+                    alert(msg);
+                    isTracking = false;
+                    btn.innerText = "📡 Start Tracking";
+                    btn.classList.remove('tracking-on');
+                }, { 
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0 
+                });
+
             } else {
                 isTracking = false;
                 navigator.geolocation.clearWatch(watchID);
@@ -275,7 +309,7 @@
             }
         };
 
-        // --- RESTORE VIEW ROUTE ---
+        // --- VIEW ROUTE & EXCEL LOGIC ---
         window.viewRoute = async () => {
             const driverKey = document.getElementById('driverPicker').value;
             const date = document.getElementById('historyDate').value;
@@ -292,12 +326,6 @@
             }
         };
 
-        window.clearRouteLine = () => {
-            routeLine.setLatLngs([]);
-            document.getElementById('clearRouteBtn').style.display = 'none';
-        };
-
-        // --- RESTORE EXPORT EXCEL ---
         window.exportHistory = async () => {
             const driverKey = document.getElementById('driverPicker').value;
             const date = document.getElementById('historyDate').value;
@@ -320,6 +348,7 @@
             XLSX.writeFile(wb, `FleetTrack_${driverKey}_${date}.xlsx`);
         };
 
+        // --- REALTIME UI UPDATES ---
         onValue(ref(db, 'cars/car1'), (snap) => {
             if(snap.exists()){
                 const d = snap.val();
@@ -330,7 +359,7 @@
             }
         });
 
-        // Other Window Functions
+        window.clearRouteLine = () => { routeLine.setLatLngs([]); document.getElementById('clearRouteBtn').style.display = 'none'; };
         window.setVehicle = (type) => {
             currentVehicle = type;
             document.getElementById('v-car').classList.toggle('active', type === 'car');
