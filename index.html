@@ -10,9 +10,15 @@
         body, html, #map { height: 100%; width: 100%; margin: 0; padding: 0; background: #f0f0f0; }
         .menu { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1000; background: white; padding: 15px; border-radius: 20px; box-shadow: 0 8px 25px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 280px; border: 2px solid #007AFF; transition: all 0.3s; }
         
-        .driver-container { display: flex; align-items: center; gap: 12px; width: 100%; padding-bottom: 10px; border-bottom: 1px solid #eee; margin-bottom: 5px; }
+        .driver-container { display: flex; align-items: center; gap: 12px; width: 100%; padding-bottom: 10px; border-bottom: 1px solid #eee; margin-bottom: 5px; position: relative; }
+        .profile-img-wrapper { position: relative; }
         .profile-img { width: 52px; height: 52px; border-radius: 50%; border: 2px solid #007AFF; object-fit: cover; background: #eee; }
         
+        /* Status Dot */
+        .status-dot { position: absolute; bottom: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; background: #8e8e93; }
+        .status-moving { background: #34C759; box-shadow: 0 0 8px #34C759; }
+        .status-parked { background: #FF3B30; }
+
         .vehicle-switcher { display: flex; width: 100%; gap: 5px; margin-bottom: 5px; }
         .v-btn { flex: 1; padding: 8px; font-size: 12px; border-radius: 8px; border: 1px solid #007AFF; background: white; color: #007AFF; cursor: pointer; transition: 0.3s; font-weight: bold; }
         .v-btn.active { background: #007AFF; color: white; }
@@ -24,6 +30,7 @@
         button { padding: 12px 20px; border-radius: 12px; border: none; background: #007AFF; color: white; font-weight: bold; width: 100%; cursor: pointer; transition: 0.2s; }
         .btn-history { background: #5856D6; padding: 8px; font-size: 14px; }
         .btn-export { background: #34C759; display: none; margin-top: 5px; }
+        #btn.tracking-on { background: #FF3B30; }
 
         .stats-row { display: flex; gap: 10px; align-items: center; margin: 5px 0; width: 100%; justify-content: space-around; }
         .speed-display { font-size: 28px; font-weight: bold; color: #007AFF; text-align: center; }
@@ -48,7 +55,10 @@
         </div>
 
         <div class="driver-container" id="driverBox">
-            <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" alt="Driver">
+            <div class="profile-img-wrapper">
+                <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" alt="Driver">
+                <div id="statusDot" class="status-dot"></div>
+            </div>
             <div style="display:flex; flex-direction:column; flex-grow:1;">
                 <span id="displayDriver" style="font-weight:bold;">Ron Sarmenta</span>
                 <span id="displayUser" style="font-size:11px; color:#007AFF;">@ronsarmenta_imerch</span>
@@ -80,13 +90,12 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
-        import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+        import { getDatabase, ref, onValue, get, update } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
 
         const firebaseConfig = { databaseURL: "https://cartracker-1df45-default-rtdb.firebaseio.com/" };
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
 
-        // Icons
         const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/744/744465.png', iconSize: [40, 40], iconAnchor: [20, 20] });
         const motoIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/1986/1986937.png', iconSize: [40, 40], iconAnchor: [20, 20] });
 
@@ -98,18 +107,50 @@
 
         let liveListener = null;
         let isHistoryMode = false;
+        let isTracking = false;
+        let watchID = null;
 
-        // --- PROFILE PICTURE & INFO UPDATER ---
+        // --- TRACKING LOGIC ---
+        window.toggleTracking = () => {
+            const btn = document.getElementById('btn');
+            const driverKey = document.getElementById('driverPicker').value;
+
+            if (!isTracking) {
+                if (navigator.geolocation) {
+                    isTracking = true;
+                    btn.innerText = "🛑 Stop Tracking";
+                    btn.classList.add('tracking-on');
+                    document.getElementById('status').innerText = "Broadcasting Location...";
+                    
+                    watchID = navigator.geolocation.watchPosition((pos) => {
+                        const lat = pos.coords.latitude;
+                        const lng = pos.coords.longitude;
+                        const speed = Math.round((pos.coords.speed || 0) * 3.6); // m/s to km/h
+
+                        update(ref(db, 'cars/car1'), {
+                            lat: lat,
+                            lng: lng,
+                            speed: speed,
+                            driver: driverKey,
+                            lastUpdated: new Date().getTime()
+                        });
+                    }, (err) => console.error(err), { enableHighAccuracy: true });
+                }
+            } else {
+                isTracking = false;
+                navigator.geolocation.clearWatch(watchID);
+                btn.innerText = "📡 Start Fleet Tracking";
+                btn.classList.remove('tracking-on');
+                document.getElementById('status').innerText = "Tracking Paused";
+            }
+        };
+
         window.updateDriverProfile = () => {
             const picker = document.getElementById('driverPicker');
             const val = picker.value;
             const name = picker.options[picker.selectedIndex].text;
-            
-            // Set Image Source based on value
             const imgPath = val === 'ron' ? "Ron Sarmenta.jpg" : val + ".jpg";
             document.getElementById('profilePic').src = imgPath;
-            
-            // Update Text Info
             document.getElementById('displayDriver').innerText = name;
             document.getElementById('displayUser').innerText = "@" + val + "_imerch";
         };
@@ -120,26 +161,10 @@
             carMarker.setIcon(type === 'moto' ? motoIcon : carIcon);
         };
 
-        window.exportToExcel = async () => {
-            const date = document.getElementById('historyDate').value;
-            const driverKey = document.getElementById('driverPicker').value;
-            const snapshot = await get(ref(db, `archives/${driverKey}/${date}`));
-            if (!snapshot.exists()) return alert("No logs found.");
-            const rows = Object.keys(snapshot.val()).map(ts => ({
-                "Date": date, "Time": new Date(parseInt(ts)).toLocaleTimeString('en-PH'),
-                "Lat": snapshot.val()[ts].lat, "Lng": snapshot.val()[ts].lng
-            }));
-            const ws = XLSX.utils.json_to_sheet(rows);
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "Log");
-            XLSX.writeFile(wb, `iMerch_Log_${date}.xlsx`);
-        };
-
         window.loadHistory = async () => {
             const date = document.getElementById('historyDate').value;
             const driver = document.getElementById('driverPicker').value;
             if(!date) return alert("Select date!");
-            if(liveListener) liveListener(); 
             isHistoryMode = true;
             document.getElementById('liveBtn').style.display = "block";
             document.getElementById('exportBtn').style.display = "block";
@@ -149,6 +174,8 @@
                 routePath.setLatLngs(points);
                 carMarker.setLatLng(points[points.length - 1]);
                 map.fitBounds(routePath.getBounds());
+            } else {
+                alert("No history found for this date.");
             }
         };
 
@@ -166,10 +193,21 @@
                     const d = snap.val();
                     carMarker.setLatLng([d.lat, d.lng]);
                     if (d.history) routePath.setLatLngs(Object.values(d.history).map(p => [p.lat, p.lng]));
-                    document.getElementById('speed').innerText = d.speed || 0;
+                    
+                    // UI Stats
+                    const speed = d.speed || 0;
+                    document.getElementById('speed').innerText = speed;
                     document.getElementById('distance').innerText = "🏁 " + (d.dist || "0.00") + " km";
                     document.getElementById('battery').innerText = "🔋 " + (d.battery || "--") + "%";
                     document.getElementById('lastSeen').innerText = "Last Seen: " + new Date().toLocaleTimeString('en-PH');
+
+                    // Status Dot Logic
+                    const dot = document.getElementById('statusDot');
+                    if (speed > 2) {
+                        dot.className = "status-dot status-moving";
+                    } else {
+                        dot.className = "status-dot status-parked";
+                    }
                 }
             });
         }
