@@ -43,7 +43,7 @@
 
         .side-controls { position: absolute; top: 20px; right: 20px; z-index: 1002; display: flex; flex-direction: column; gap: 10px; }
         .control-btn { background: var(--bg); border: 1.5px solid var(--border); width: 45px; height: 45px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.1); transition: 0.3s; }
-        .control-btn.active { background: #007AFF; color: white; }
+        .control-btn.active { background: #007AFF; color: white; border-color: #007AFF; }
 
         .menu { 
             position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); 
@@ -132,9 +132,24 @@
         </div>
     </div>
 
-    <div id="chartModal"><div class="modal-content"><h3>📊 Fleet Analysis</h3><canvas id="fuelChart"></canvas><button class="main-btn" onclick="exportFuelExcel()" style="background:#34C759; margin-top:10px;">📥 Download Excel</button><button class="main-btn" style="background:gray; margin-top:5px;" onclick="closeChartModal()">Close</button></div></div>
+    <div id="chartModal">
+        <div class="modal-content">
+            <h3>📊 Fleet Analysis</h3>
+            <canvas id="fuelChart"></canvas>
+            <button class="main-btn" onclick="exportToExcel()" style="background:#34C759; margin-top:10px;">📥 Download Excel</button>
+            <button class="main-btn" style="background:gray; margin-top:5px;" onclick="closeChartModal()">Close</button>
+        </div>
+    </div>
     
-    <div id="fuelModal"><div class="modal-content"><h3>⛽ Fuel Entry</h3><input type="number" id="fuelAmount" placeholder="PHP Amount" style="width:100%; padding:10px; margin:5px 0;"><input type="number" id="fuelLiters" placeholder="Liters" style="width:100%; padding:10px; margin:5px 0;"><button class="main-btn" onclick="submitFuel()">Save Log</button><button onclick="closeFuelModal()" style="border:none; background:none; margin-top:10px; width:100%;">Cancel</button></div></div>
+    <div id="fuelModal">
+        <div class="modal-content">
+            <h3>⛽ Fuel Entry</h3>
+            <input type="number" id="fuelAmount" placeholder="PHP Amount" style="width:100%; padding:10px; margin:5px 0;">
+            <input type="number" id="fuelLiters" placeholder="Liters" style="width:100%; padding:10px; margin:5px 0;">
+            <button class="main-btn" onclick="submitFuel()">Save Log</button>
+            <button onclick="closeFuelModal()" style="border:none; background:none; margin-top:10px; width:100%;">Cancel</button>
+        </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script type="module">
@@ -151,37 +166,35 @@
 
         let vehicleMarkers = {};
         let followMe = false;
-        let lastPosition = null;
         let currentVehicleType = 'car';
+        let fuelChartInstance = null;
 
-        // Custom Icon Creator
         const createIcon = (type, rotation = 0) => {
             const url = (type === 'bike') ? 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png' : 'https://cdn-icons-png.flaticon.com/512/741/741407.png';
             return L.divIcon({
                 className: 'rotated-marker',
                 html: `<img src="${url}" style="width:40px; height:40px; transform: rotate(${rotation}deg);">`,
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
+                iconSize: [40, 40], iconAnchor: [20, 20]
             });
         };
 
-        // Sync Vehicle Selection
         window.setVehicleType = (type) => {
             currentVehicleType = type;
             document.getElementById('typeCar').classList.toggle('active', type === 'car');
             document.getElementById('typeBike').classList.toggle('active', type === 'bike');
         };
 
-        // Last Seen and Marker Logic
         onValue(ref(db, 'cars'), (snapshot) => {
             const data = snapshot.val();
             if(!data) return;
             for(let id in data) {
                 const { lat, lng, type, heading, lastUpdated } = data[id];
+                const driverSelected = document.getElementById('driverPicker').value;
                 
-                // Update "Last Seen" for current selected driver
-                if(id === document.getElementById('driverPicker').value) {
+                if(id === driverSelected) {
                     document.getElementById('lastUpdateTime').innerText = lastUpdated || "--:--:--";
+                    // Pin Location Follow Logic
+                    if(followMe) map.panTo([lat, lng]);
                 }
 
                 if(!vehicleMarkers[id]) {
@@ -208,10 +221,9 @@
                     update(ref(db, `cars/${driver}`), { 
                         lat, lng, speed, type: currentVehicleType, lastUpdated: time 
                     });
-
-                    // Push to History Log
                     push(ref(db, `history/${driver}/${dateKey}`), { lat, lng, time, speed });
-
+                    
+                    document.getElementById('liveSpeed').innerText = speed;
                 }, null, { enableHighAccuracy: true });
             } else {
                 window.isTracking = false;
@@ -220,30 +232,47 @@
             }
         };
 
-        // History UI Logic
-        window.openHistoryModal = () => document.getElementById('historyModal').style.display = 'flex';
-        window.closeHistoryModal = () => document.getElementById('historyModal').style.display = 'none';
-        
-        window.loadHistory = async () => {
-            const driver = document.getElementById('driverPicker').value;
-            const date = document.getElementById('historyDate').value;
-            const list = document.getElementById('historyList');
-            list.innerHTML = "Loading...";
-            
-            const snapshot = await get(ref(db, `history/${driver}/${date}`));
-            const data = snapshot.val();
-            list.innerHTML = "";
-            if(!data) return list.innerHTML = "No logs for this day.";
-            
-            Object.values(data).reverse().forEach(log => {
-                const item = document.createElement('div');
-                item.className = 'log-item';
-                item.innerHTML = `<b>${log.time}</b> - Speed: ${log.speed} km/h <br><small>${log.lat.toFixed(4)}, ${log.lng.toFixed(4)}</small>`;
-                list.appendChild(item);
+        // Report & Chart Logic
+        window.initChart = async () => {
+            const snapshot = await get(ref(db, 'fuelLogs'));
+            const logs = snapshot.val() || {};
+            const labels = Object.keys(logs).slice(-7); 
+            const values = labels.map(day => Object.values(logs[day]).reduce((a,b) => a + Number(b.amount), 0));
+
+            if(fuelChartInstance) fuelChartInstance.destroy();
+            const ctx = document.getElementById('fuelChart').getContext('2d');
+            fuelChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Fuel Expense (PHP)', data: values, backgroundColor: '#007AFF' }] }
             });
         };
 
-        // Misc UI
+        window.submitFuel = () => {
+            const amt = document.getElementById('fuelAmount').value;
+            const ltr = document.getElementById('fuelLiters').value;
+            if(!amt || !ltr) return alert("Fill all fields");
+            const dateKey = new Date().toISOString().split('T')[0];
+            push(ref(db, `fuelLogs/${dateKey}`), { amount: amt, liters: ltr, time: new Date().toLocaleTimeString() });
+            alert("Fuel Log Saved!");
+            closeFuelModal();
+        };
+
+        window.exportToExcel = async () => {
+            const snapshot = await get(ref(db, 'fuelLogs'));
+            const data = snapshot.val();
+            let rows = [["Date", "Amount (PHP)", "Liters"]];
+            for(let date in data) {
+                for(let id in data[date]) {
+                    rows.push([date, data[date][id].amount, data[date][id].liters]);
+                }
+            }
+            const ws = XLSX.utils.aoa_to_sheet(rows);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Fuel_Report");
+            XLSX.writeFile(wb, "Fleet_Fuel_Report.xlsx");
+        };
+
+        // UI Helpers
         window.toggleFollowMe = () => { followMe = !followMe; document.getElementById('followBtn').classList.toggle('active', followMe); };
         window.toggleTheme = () => document.body.classList.toggle('dark-mode');
         window.toggleMapStyle = () => {
@@ -252,7 +281,15 @@
         };
         window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
         window.closeFuelModal = () => document.getElementById('fuelModal').style.display = 'none';
-        window.checkAdminPass = () => { if(prompt("Admin PW:") === "1234") document.getElementById('chartModal').style.display='flex'; };
+        window.openHistoryModal = () => document.getElementById('historyModal').style.display = 'flex';
+        window.closeHistoryModal = () => document.getElementById('historyModal').style.display = 'none';
+        window.closeChartModal = () => document.getElementById('chartModal').style.display = 'none';
+        window.checkAdminPass = () => { 
+            if(prompt("Admin PW:") === "1234") {
+                document.getElementById('chartModal').style.display='flex';
+                initChart();
+            } 
+        };
     </script>
 </body>
 </html>
