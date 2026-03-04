@@ -103,6 +103,7 @@
         .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
         .export-btn { background: #34C759; color: white; border: none; padding: 12px; border-radius: 12px; font-weight: bold; font-size: 12px; cursor: pointer; }
         .view-btn { background: #5856D6; color: white; border: none; padding: 12px; border-radius: 12px; font-weight: bold; font-size: 12px; cursor: pointer; }
+        .clear-btn { background: #8E8E93; color: white; border: none; padding: 8px; border-radius: 10px; font-weight: bold; font-size: 11px; width: 100%; cursor: pointer; }
 
         .driver-container { display: flex; align-items: center; gap: 14px; width: 100%; padding: 5px 0; }
         .profile-img { width: 50px; height: 50px; border-radius: 50%; border: 2px solid #007AFF; object-fit: cover; }
@@ -164,6 +165,7 @@
                 <button class="view-btn" onclick="viewRoute()">🗺️ View Route</button>
                 <button class="export-btn" onclick="exportHistory()">📂 Export Excel</button>
             </div>
+            <button id="clearRouteBtn" class="clear-btn" style="display:none;" onclick="clearRouteLine()">✖ Clear Route Line</button>
         </div>
     </div>
 
@@ -199,22 +201,29 @@
         lightTiles.addTo(map);
         
         let carMarker = L.marker([14.5794, 121.0359], {icon: icons.car}).addTo(map);
+        let routeLine = L.polyline([], {color: '#007AFF', weight: 5, opacity: 0.7}).addTo(map);
         let trafficLayer = null;
         let isTracking = false;
         let currentVehicle = 'car';
         let watchID = null;
 
+        // --- BATTERY BUG FIX ---
+        async function getBatteryLevel() {
+            try {
+                if (navigator.getBattery) {
+                    const battery = await navigator.getBattery();
+                    return Math.round(battery.level * 100);
+                }
+            } catch (e) { console.error("Battery API not supported"); }
+            return null;
+        }
+
         window.toggleTraffic = () => {
             const btn = document.getElementById('trafficBtn');
-            // Switched to Humanitarian/Transport OpenStreetMap layer - No secret key required
             const trafficUrl = 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png';
-            
             if (!trafficLayer) {
                 btn.classList.add('traffic-on');
-                trafficLayer = L.tileLayer(trafficUrl, {
-                    attribution: '&copy; OpenStreetMap contributors',
-                    opacity: 0.7
-                }).addTo(map);
+                trafficLayer = L.tileLayer(trafficUrl, { opacity: 0.7 }).addTo(map);
             } else {
                 btn.classList.remove('traffic-on');
                 map.removeLayer(trafficLayer);
@@ -235,37 +244,6 @@
             }
         };
 
-        window.setVehicle = (type) => {
-            currentVehicle = type;
-            document.getElementById('v-car').classList.toggle('active', type === 'car');
-            document.getElementById('v-moto').classList.toggle('active', type === 'moto');
-            carMarker.setIcon(icons[type]);
-            if (isTracking) update(ref(db, 'cars/car1'), { vehicleType: type });
-        };
-
-        window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
-        window.closeFuelModal = () => {
-            document.getElementById('fuelModal').style.display = 'none';
-            document.getElementById('fuelAmount').value = '';
-            document.getElementById('fuelLiters').value = '';
-        };
-
-        window.submitFuel = async () => {
-            const amount = document.getElementById('fuelAmount').value;
-            const liters = document.getElementById('fuelLiters').value;
-            const driverKey = document.getElementById('driverPicker').value;
-            if(!amount || !liters) return alert("Please fill both fields.");
-            await push(ref(db, `fuel_logs/${driverKey}`), {
-                amount: parseFloat(amount),
-                liters: parseFloat(liters),
-                vehicle: currentVehicle,
-                timestamp: new Date().getTime(),
-                dateString: new Date().toLocaleDateString()
-            });
-            alert("Fuel logged successfully!");
-            closeFuelModal();
-        };
-
         window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
             const driverKey = document.getElementById('driverPicker').value;
@@ -273,10 +251,20 @@
                 isTracking = true;
                 btn.innerText = "🛑 Stop Tracking";
                 btn.classList.add('tracking-on');
-                watchID = navigator.geolocation.watchPosition((pos) => {
+                watchID = navigator.geolocation.watchPosition(async (pos) => {
                     const { latitude: lat, longitude: lng, speed: s } = pos.coords;
-                    update(ref(db, 'cars/car1'), { lat, lng, speed: Math.round((s || 0) * 3.6), driver: driverKey, vehicleType: currentVehicle, lastUpdated: new Date().getTime() });
-                    push(ref(db, `archives/${driverKey}/${new Date().toISOString().split('T')[0]}`), { lat, lng, timestamp: new Date().getTime() });
+                    const batt = await getBatteryLevel();
+                    const updateData = { 
+                        lat, lng, 
+                        speed: Math.round((s || 0) * 3.6), 
+                        driver: driverKey, 
+                        vehicleType: currentVehicle, 
+                        lastUpdated: new Date().getTime() 
+                    };
+                    if (batt !== null) updateData.battery = batt;
+                    
+                    update(ref(db, 'cars/car1'), updateData);
+                    push(ref(db, `archives/${driverKey}/${new Date().toISOString().split('T')[0]}`), { lat, lng, timestamp: new Date().getTime(), battery: batt });
                     map.panTo([lat, lng]);
                 }, null, { enableHighAccuracy: true });
             } else {
@@ -285,6 +273,51 @@
                 btn.innerText = "📡 Start Tracking";
                 btn.classList.remove('tracking-on');
             }
+        };
+
+        // --- RESTORE VIEW ROUTE ---
+        window.viewRoute = async () => {
+            const driverKey = document.getElementById('driverPicker').value;
+            const date = document.getElementById('historyDate').value;
+            if(!date) return alert("Select a date first.");
+
+            const snapshot = await get(ref(db, `archives/${driverKey}/${date}`));
+            if(snapshot.exists()){
+                const coords = Object.values(snapshot.val()).map(p => [p.lat, p.lng]);
+                routeLine.setLatLngs(coords);
+                map.fitBounds(routeLine.getBounds());
+                document.getElementById('clearRouteBtn').style.display = 'block';
+            } else {
+                alert("No logs found for this date.");
+            }
+        };
+
+        window.clearRouteLine = () => {
+            routeLine.setLatLngs([]);
+            document.getElementById('clearRouteBtn').style.display = 'none';
+        };
+
+        // --- RESTORE EXPORT EXCEL ---
+        window.exportHistory = async () => {
+            const driverKey = document.getElementById('driverPicker').value;
+            const date = document.getElementById('historyDate').value;
+            if(!date) return alert("Select a date first.");
+
+            const snapshot = await get(ref(db, `archives/${driverKey}/${date}`));
+            if(!snapshot.exists()) return alert("No data to export.");
+
+            const rawData = Object.values(snapshot.val());
+            const formattedData = rawData.map(item => ({
+                Time: new Date(item.timestamp).toLocaleTimeString(),
+                Latitude: item.lat,
+                Longitude: item.lng,
+                Battery: item.battery ? item.battery + "%" : "N/A"
+            }));
+
+            const ws = XLSX.utils.json_to_sheet(formattedData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "History");
+            XLSX.writeFile(wb, `FleetTrack_${driverKey}_${date}.xlsx`);
         };
 
         onValue(ref(db, 'cars/car1'), (snap) => {
@@ -297,6 +330,15 @@
             }
         });
 
+        // Other Window Functions
+        window.setVehicle = (type) => {
+            currentVehicle = type;
+            document.getElementById('v-car').classList.toggle('active', type === 'car');
+            document.getElementById('v-moto').classList.toggle('active', type === 'moto');
+            carMarker.setIcon(icons[type]);
+        };
+        window.openFuelModal = () => document.getElementById('fuelModal').style.display = 'flex';
+        window.closeFuelModal = () => document.getElementById('fuelModal').style.display = 'none';
         window.updateDriverProfile = () => {
             const picker = document.getElementById('driverPicker');
             document.getElementById('profilePic').src = picker.value + ".jpg";
