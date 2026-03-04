@@ -53,7 +53,7 @@
         </select>
 
         <div class="driver-container" id="driverBox">
-            <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" alt="Driver" onerror="this.src='https://ui-avatars.com/api/?name=User&background=007AFF&color=fff'">
+            <img id="profilePic" src="Ron Sarmenta.jpg" class="profile-img" alt="Driver">
             <div class="driver-text">
                 <span class="driver-name" id="displayDriver">Ron Sarmenta</span>
                 <span class="driver-user" id="displayUser">@ronsarmenta_imerch</span>
@@ -86,7 +86,6 @@
         const app = initializeApp(firebaseConfig);
         const db = getDatabase(app);
         
-        // FIXED: Added missing comma and correctly formatted Vergel object
         const drivers = {
             ron: { name: "Ron Sarmenta", user: "@ronsarmenta_imerch", img: "Ron Sarmenta.jpg" },
             mico: { name: "Mico Balmaceda", user: "@mico_imerch", img: "mico.jpg" },
@@ -102,11 +101,14 @@
             const selected = document.getElementById('driverPicker').value;
             localStorage.setItem('selectedDriver', selected);
             const info = drivers[selected];
+            
             document.getElementById('displayDriver').innerText = info.name;
             document.getElementById('displayUser').innerText = info.user;
-            document.getElementById('profilePic').src = info.img;
-            document.getElementById('profilePic').onerror = () => {
-                document.getElementById('profilePic').src = `https://ui-avatars.com/api/?name=${info.name.replace(' ','+')}&background=007AFF&color=fff`;
+            
+            const pPic = document.getElementById('profilePic');
+            pPic.src = info.img;
+            pPic.onerror = () => {
+                pPic.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(info.name)}&background=007AFF&color=fff`;
             };
         };
 
