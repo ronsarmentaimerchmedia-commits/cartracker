@@ -14,7 +14,6 @@
         .profile-img-wrapper { position: relative; }
         .profile-img { width: 52px; height: 52px; border-radius: 50%; border: 2px solid #007AFF; object-fit: cover; background: #eee; }
         
-        /* Status Dot */
         .status-dot { position: absolute; bottom: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; border: 2px solid white; background: #8e8e93; }
         .status-moving { background: #34C759; box-shadow: 0 0 8px #34C759; }
         .status-parked { background: #FF3B30; }
@@ -109,9 +108,25 @@
         let isHistoryMode = false;
         let isTracking = false;
         let watchID = null;
+        
+        // Variables for distance calculation
+        let lastLat = null;
+        let lastLng = null;
+        let totalDistance = 0;
+
+        // Helper: Calculate Distance between two points in KM
+        function getDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Radius of the earth in km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c;
+        }
 
         // --- TRACKING LOGIC ---
-        window.toggleTracking = () => {
+        window.toggleTracking = async () => {
             const btn = document.getElementById('btn');
             const driverKey = document.getElementById('driverPicker').value;
 
@@ -120,20 +135,45 @@
                     isTracking = true;
                     btn.innerText = "🛑 Stop Tracking";
                     btn.classList.add('tracking-on');
-                    document.getElementById('status').innerText = "Broadcasting Location...";
                     
-                    watchID = navigator.geolocation.watchPosition((pos) => {
+                    // Reset distance on new session
+                    totalDistance = 0;
+                    lastLat = null;
+                    lastLng = null;
+
+                    watchID = navigator.geolocation.watchPosition(async (pos) => {
                         const lat = pos.coords.latitude;
                         const lng = pos.coords.longitude;
-                        const speed = Math.round((pos.coords.speed || 0) * 3.6); // m/s to km/h
+                        const speed = Math.round((pos.coords.speed || 0) * 3.6);
+                        
+                        // Calculate Distance
+                        if (lastLat !== null && lastLng !== null) {
+                            const d = getDistance(lastLat, lastLng, lat, lng);
+                            if (d > 0.005) { // Only add if moved more than 5 meters to avoid jitter
+                                totalDistance += d;
+                            }
+                        }
+                        lastLat = lat;
+                        lastLng = lng;
 
+                        // Get Real-time Battery
+                        let batteryLevel = "--";
+                        if (navigator.getBattery) {
+                            const battery = await navigator.getBattery();
+                            batteryLevel = Math.round(battery.level * 100);
+                        }
+
+                        // Update Firebase
                         update(ref(db, 'cars/car1'), {
                             lat: lat,
                             lng: lng,
                             speed: speed,
+                            dist: totalDistance.toFixed(2),
+                            battery: batteryLevel,
                             driver: driverKey,
                             lastUpdated: new Date().getTime()
                         });
+
                     }, (err) => console.error(err), { enableHighAccuracy: true });
                 }
             } else {
@@ -141,7 +181,6 @@
                 navigator.geolocation.clearWatch(watchID);
                 btn.innerText = "📡 Start Fleet Tracking";
                 btn.classList.remove('tracking-on');
-                document.getElementById('status').innerText = "Tracking Paused";
             }
         };
 
@@ -174,8 +213,6 @@
                 routePath.setLatLngs(points);
                 carMarker.setLatLng(points[points.length - 1]);
                 map.fitBounds(routePath.getBounds());
-            } else {
-                alert("No history found for this date.");
             }
         };
 
@@ -192,22 +229,15 @@
                 if(snap.exists() && !isHistoryMode){
                     const d = snap.val();
                     carMarker.setLatLng([d.lat, d.lng]);
-                    if (d.history) routePath.setLatLngs(Object.values(d.history).map(p => [p.lat, p.lng]));
                     
-                    // UI Stats
                     const speed = d.speed || 0;
                     document.getElementById('speed').innerText = speed;
                     document.getElementById('distance').innerText = "🏁 " + (d.dist || "0.00") + " km";
                     document.getElementById('battery').innerText = "🔋 " + (d.battery || "--") + "%";
                     document.getElementById('lastSeen').innerText = "Last Seen: " + new Date().toLocaleTimeString('en-PH');
 
-                    // Status Dot Logic
                     const dot = document.getElementById('statusDot');
-                    if (speed > 2) {
-                        dot.className = "status-dot status-moving";
-                    } else {
-                        dot.className = "status-dot status-parked";
-                    }
+                    dot.className = speed > 2 ? "status-dot status-moving" : "status-dot status-parked";
                 }
             });
         }
