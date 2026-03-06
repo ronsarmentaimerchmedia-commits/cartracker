@@ -70,7 +70,7 @@
         #chartModal, #routeModal, #fuelModal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; display: none; align-items: center; justify-content: center; }
         input, select { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #ddd; margin: 5px 0; box-sizing: border-box; }
         
-        .vehicle-icon { transition: transform 0.5s ease-in-out; }
+        .vehicle-icon { transition: transform 0.3s linear, left 0.3s linear, top 0.3s linear; }
     </style>
 </head>
 <body class="light-mode">
@@ -190,7 +190,6 @@
         const carIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/741/741407.png', iconSize: [40, 40], iconAnchor: [20, 20], className: 'vehicle-icon' });
         const bikeIcon = L.icon({ iconUrl: 'https://cdn-icons-png.flaticon.com/512/2965/2965319.png', iconSize: [40, 40], iconAnchor: [20, 20], className: 'vehicle-icon' });
 
-        // UPDATED: 12-hour Clock Logic
         function updateLiveClock() {
             const now = new Date();
             document.getElementById('liveDate').innerText = now.toLocaleDateString();
@@ -202,7 +201,7 @@
             followMe = !followMe;
             const fBtn = document.getElementById('followBtn');
             fBtn.classList.toggle('active', followMe);
-            if(followMe && lastPosition) map.panTo([lastPosition.lat, lastPosition.lng]);
+            if(followMe && lastPosition) map.flyTo([lastPosition.lat, lastPosition.lng], 17);
         };
 
         async function updateBatteryDisplay() {
@@ -252,6 +251,13 @@
             document.getElementById('typeCar').classList.toggle('active', type === 'car');
             document.getElementById('typeBike').classList.toggle('active', type === 'bike');
             update(ref(db, `cars/${driver}`), { type: type });
+            
+            // UI Visual Feedback: Center on updated marker
+            if (vehicleMarkers[driver]) {
+                const icon = (type === 'bike') ? bikeIcon : carIcon;
+                vehicleMarkers[driver].setIcon(icon);
+                map.panTo(vehicleMarkers[driver].getLatLng());
+            }
         };
 
         window.submitFuel = async () => {
@@ -394,12 +400,13 @@
                 
                 if (bearing !== undefined) {
                     const markerEl = vehicleMarkers[driver].getElement();
-                    if (markerEl) markerEl.style.transform += ` rotate(${bearing}deg)`;
+                    if (markerEl) markerEl.style.transform = `translate3d(${markerEl._leaflet_pos?.x || 0}px, ${markerEl._leaflet_pos?.y || 0}px, 0) rotate(${bearing}deg)`;
                 }
 
                 if(driver === currentSelected) {
                     document.getElementById('lastUpdateTime').innerText = lastUpdated || "--:--:--";
                     if(lastEfficiency) document.getElementById('statEff').innerText = lastEfficiency;
+                    if(followMe) map.panTo([lat, lng]);
                 }
             }
         });
@@ -432,16 +439,14 @@
                     const speed = Math.round((pos.coords.speed || 0) * 3.6);
                     const now = new Date();
                     
-                    // UPDATED: 12-hour format for lastUpdated
                     const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-                    
                     const dateKey = now.toISOString().split('T')[0].replace(/-/g, "");
                     let bearing = 0;
 
                     if (lastPosition) {
                         const dist = calculateDistance(lastPosition.lat, lastPosition.lng, lat, lng);
                         bearing = calculateBearing(lastPosition.lat, lastPosition.lng, lat, lng);
-                        if (dist > 0.005) { 
+                        if (dist > 0.002) { 
                             totalDistance += dist;
                             push(ref(db, `history/${driver}/${dateKey}`), { lat, lng, timestamp: Date.now() });
                         }
@@ -461,7 +466,7 @@
                     });
                     
                     if(followMe) map.panTo([lat, lng]);
-                }, null, { enableHighAccuracy: true });
+                }, (err) => console.error(err), { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 });
             } else {
                 window.isTracking = false;
                 navigator.geolocation.clearWatch(window.watchID);
